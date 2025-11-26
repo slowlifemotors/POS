@@ -1,14 +1,25 @@
-/// app/api/categories/route.ts
+// app/api/categories/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+/* ---------------------------------------------------------
+   Create Supabase client INSIDE each handler
+   (Fixes: "supabaseKey is required" at build time)
+--------------------------------------------------------- */
+function supabaseServer() {
+  return createClient(
+    process.env.SUPABASE_URL!,          // server URL
+    process.env.SUPABASE_SERVICE_KEY!,  // service role key
+    { auth: { persistSession: false } }
+  );
+}
 
-// GET — all categories
+/* ---------------------------------------------------------
+   GET — all categories
+--------------------------------------------------------- */
 export async function GET() {
+  const supabase = supabaseServer();
+
   const { data, error } = await supabase
     .from("categories")
     .select("*")
@@ -23,17 +34,17 @@ export async function GET() {
   return NextResponse.json(data);
 }
 
-// POST — create category
+/* ---------------------------------------------------------
+   POST — create category
+--------------------------------------------------------- */
 export async function POST(req: Request) {
   try {
+    const supabase = supabaseServer();
     const body = await req.json();
     const { name, description, display_order, icon, color } = body;
 
     if (!name || typeof name !== "string") {
-      return NextResponse.json(
-        { error: "Name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -62,9 +73,12 @@ export async function POST(req: Request) {
   }
 }
 
-// PUT — update category
+/* ---------------------------------------------------------
+   PUT — update category
+--------------------------------------------------------- */
 export async function PUT(req: Request) {
   try {
+    const supabase = supabaseServer();
     const body = await req.json();
     const { id, name, description, display_order, icon, color } = body;
 
@@ -99,9 +113,12 @@ export async function PUT(req: Request) {
   }
 }
 
-// DELETE — delete category
+/* ---------------------------------------------------------
+   DELETE — delete category
+--------------------------------------------------------- */
 export async function DELETE(req: Request) {
   try {
+    const supabase = supabaseServer();
     const body = await req.json();
     const { id } = body;
 
