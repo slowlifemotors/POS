@@ -56,10 +56,7 @@ export default function NavBar({
         {/* BUSINESS LOGO + NAME */}
         <div className="flex items-center gap-3">
           <div
-            style={{
-              width: logoWidth,
-              height: logoHeight,
-            }}
+            style={{ width: logoWidth, height: logoHeight }}
             className="flex items-center justify-center overflow-hidden rounded-md"
           >
             <Image
@@ -83,12 +80,11 @@ export default function NavBar({
               <Link
                 key={tab.name}
                 href={tab.href}
-                className={`px-3 py-2 text-sm font-medium rounded-md transition
-                  ${
-                    active
-                      ? "bg-slate-700 text-white"
-                      : "text-slate-300 hover:text-white hover:bg-slate-800"
-                  }`}
+                className={`px-3 py-2 text-sm font-medium rounded-md transition ${
+                  active
+                    ? "bg-slate-700 text-white"
+                    : "text-slate-300 hover:text-white hover:bg-slate-800"
+                }`}
               >
                 {tab.name}
               </Link>
@@ -103,7 +99,8 @@ export default function NavBar({
                   pathname.startsWith("/settings") ||
                   pathname.startsWith("/payments") ||
                   pathname.startsWith("/reports") ||
-                  pathname.startsWith("/live")
+                  pathname.startsWith("/live") ||
+                  pathname.startsWith("/sales")
                     ? "bg-slate-700 text-white"
                     : "text-slate-300 hover:text-white hover:bg-slate-800"
                 }`}
@@ -119,6 +116,13 @@ export default function NavBar({
                       className="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white"
                     >
                       Live
+                    </Link>
+
+                    <Link
+                      href="/sales"
+                      className="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white"
+                    >
+                      Sales
                     </Link>
 
                     <Link
