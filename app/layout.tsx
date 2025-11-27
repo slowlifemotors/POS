@@ -6,6 +6,9 @@ import NavBar from "./components/NavBar";
 import { ThemeProvider } from "./theme-provider";
 import { getSession } from "@/lib/auth";
 
+// -------------------------------
+// FONTS
+// -------------------------------
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -15,24 +18,59 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// -------------------------------
+// METADATA
+// -------------------------------
 export const metadata: Metadata = {
   title: "Galaxy Nightclub POS",
   description: "POS system for Galaxy Nightclub",
 };
 
-// ---------------------------------------------------------
-// LOAD BUSINESS SETTINGS (SERVER)
-// ---------------------------------------------------------
+// -------------------------------
+// SAFE BASE URL (LOCAL + VERCEL)
+// -------------------------------
+function getBaseURL() {
+  // If NEXT_PUBLIC_BASE_URL exists → always preferred
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+
+  // If deployed on Vercel
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+
+  // Local fallback
+  return "http://localhost:3000";
+}
+
+// -------------------------------
+// LOAD BUSINESS SETTINGS
+// -------------------------------
 async function loadBusinessSettings() {
-  const res = await fetch("http://localhost:3000/api/settings/business", {
+  const base = getBaseURL();
+
+  const res = await fetch(`${base}/api/settings/business`, {
     cache: "no-store",
   });
+
+  if (!res.ok) {
+    console.error("Failed to load business settings:", await res.text());
+    return {};
+  }
 
   const json = await res.json();
   return json.settings || {};
 }
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
+// -------------------------------
+// ROOT LAYOUT
+// -------------------------------
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // Load session
   const session = await getSession();
 
@@ -46,7 +84,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       }
     : null;
 
-  // Load settings
+  // Load business settings
   const settings = await loadBusinessSettings();
 
   const businessName = settings.business_name || "My Business";
