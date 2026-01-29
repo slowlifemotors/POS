@@ -1,4 +1,3 @@
-// app/layout.tsx
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -17,19 +16,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Galaxy Nightclub POS",
-  description: "POS system for Galaxy Nightclub",
+  title: "Slowlife Motors POS",
+  description: "POS system for Slowlife Motos",
 };
 
-// -------------------------------
-// DIRECT SUPABASE SERVER QUERY
-// -------------------------------
 async function loadBusinessSettings() {
-  const supabase = createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_KEY!,
-    { auth: { persistSession: false } }
-  );
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+
+  if (!url || !key) {
+    console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY");
+    return {};
+  }
+
+  const supabase = createClient(url, key, { auth: { persistSession: false } });
 
   const { data, error } = await supabase
     .from("business_settings")
@@ -45,9 +45,6 @@ async function loadBusinessSettings() {
   return data || {};
 }
 
-// -------------------------------
-// ROOT LAYOUT
-// -------------------------------
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
 
@@ -61,8 +58,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       }
     : null;
 
-  // DIRECTLY LOAD SETTINGS FROM SUPABASE (NOT OWN API)
-  const settings = await loadBusinessSettings();
+  const settings: any = await loadBusinessSettings();
 
   const businessName = settings.business_name || "My Business";
   const businessLogo = settings.business_logo_url || "/logo.png";
@@ -70,12 +66,56 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const logoWidth = settings.logo_width ?? 60;
   const logoHeight = settings.logo_height ?? 60;
 
+  const bgUrl: string | null = settings.background_image_url ?? null;
+
+  const bgOpacityRaw = settings.background_opacity;
+  const bgOpacity =
+    typeof bgOpacityRaw === "number"
+      ? bgOpacityRaw
+      : bgOpacityRaw
+      ? Number(bgOpacityRaw)
+      : 0.12;
+
+  const darkenEnabled = Boolean(settings.background_darken_enabled);
+  const darkenStrengthRaw = settings.background_darken_strength;
+  const darkenStrength =
+    typeof darkenStrengthRaw === "number"
+      ? darkenStrengthRaw
+      : darkenStrengthRaw
+      ? Number(darkenStrengthRaw)
+      : 0.35;
+
+  const safeOpacity = Number.isFinite(bgOpacity) ? Math.min(Math.max(bgOpacity, 0), 1) : 0.12;
+  const safeDarkness = Number.isFinite(darkenStrength)
+    ? Math.min(Math.max(darkenStrength, 0), 1)
+    : 0.35;
+
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-950 text-slate-100`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-slate-950 text-slate-100`}>
         <ThemeProvider themeColor={themeColor} />
+
+        {/* GLOBAL BACKGROUND (never blocks mouse, always behind) */}
+        <div className="fixed inset-0 -z-10 pointer-events-none">
+          {/* image layer */}
+          {bgUrl ? (
+            <div
+              className="absolute inset-0 bg-center bg-cover"
+              style={{
+                backgroundImage: `url("${bgUrl}")`,
+                opacity: safeOpacity,
+              }}
+            />
+          ) : null}
+
+          {/* optional darken overlay */}
+          {darkenEnabled ? (
+            <div
+              className="absolute inset-0 bg-black"
+              style={{ opacity: safeDarkness }}
+            />
+          ) : null}
+        </div>
 
         {navSession && (
           <NavBar
@@ -87,7 +127,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           />
         )}
 
-        <main className="min-h-screen pt-20">{children}</main>
+        {/* main content always above background */}
+        <main className="min-h-screen pt-20 relative z-0">{children}</main>
       </body>
     </html>
   );

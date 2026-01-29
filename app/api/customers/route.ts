@@ -1,16 +1,14 @@
-// app/api/customers/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!,
-  { auth: { persistSession: false } }
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY!
 );
 
-// ========================================================
-// GET — list all customers
-// ========================================================
+/* ======================================================
+   GET — list customers
+====================================================== */
 export async function GET() {
   const { data, error } = await supabase
     .from("customers")
@@ -18,132 +16,104 @@ export async function GET() {
       id,
       name,
       phone,
-      email,
       discount_id,
+      voucher_amount,
+      membership_active,
+      membership_start,
+      membership_end,
       is_blacklisted,
-      blacklist_reason,
       blacklist_start,
-      blacklist_end
+      blacklist_end,
+      blacklist_reason
     `)
-    .order("name");
+    .order("name", { ascending: true });
 
   if (error) {
     console.error("Customer load error:", error);
-    return NextResponse.json({ customers: [] });
+    return NextResponse.json({ error }, { status: 500 });
   }
 
   return NextResponse.json({ customers: data });
 }
 
-// ========================================================
-// POST — create customer
-// ========================================================
+/* ======================================================
+   POST — create customer
+====================================================== */
 export async function POST(req: Request) {
-  try {
-    const body = await req.json();
+  const body = await req.json();
 
-    const newCustomer = {
-      name: body.name ?? "",
-      phone: body.phone ?? null,
-      email: body.email ?? null,
-      discount_id: body.discount_id ?? null,
+  const { error } = await supabase.from("customers").insert({
+    name: body.name,
+    phone: body.phone || null,
+    discount_id: body.discount_id ?? null,
+    voucher_amount: body.voucher_amount ?? 0,
+    membership_active: body.membership_active ?? false,
+    membership_start: body.membership_start ?? null,
+    membership_end: body.membership_end ?? null,
+  });
 
-      // blacklist fields (optional)
-      is_blacklisted: body.is_blacklisted ?? false,
-      blacklist_reason: body.blacklist_reason ?? null,
-      blacklist_start: body.blacklist_start ?? null,
-      blacklist_end: body.blacklist_end ?? null,
-    };
-
-    const { data, error } = await supabase
-      .from("customers")
-      .insert(newCustomer)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Customer create error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ customer: data });
-  } catch (err) {
-    console.error("Customer POST error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  if (error) {
+    console.error("Customer create error:", error);
+    return NextResponse.json({ error }, { status: 500 });
   }
+
+  return NextResponse.json({ success: true });
 }
 
-// ========================================================
-// PUT — update customer
-// ========================================================
+/* ======================================================
+   PUT — update customer
+====================================================== */
 export async function PUT(req: Request) {
-  try {
-    const body = await req.json();
+  const body = await req.json();
 
-    if (!body.id) {
-      return NextResponse.json(
-        { error: "Missing customer ID" },
-        { status: 400 }
-      );
-    }
-
-    const updates = {
-      name: body.name ?? "",
-      phone: body.phone ?? null,
-      email: body.email ?? null,
+  const { error } = await supabase
+    .from("customers")
+    .update({
+      name: body.name,
+      phone: body.phone || null,
       discount_id: body.discount_id ?? null,
-
-      // blacklist fields
-      is_blacklisted: body.is_blacklisted ?? null,
-      blacklist_reason: body.blacklist_reason ?? null,
+      voucher_amount: body.voucher_amount ?? 0,
+      membership_active: body.membership_active ?? false,
+      membership_start: body.membership_start ?? null,
+      membership_end: body.membership_end ?? null,
+      is_blacklisted: body.is_blacklisted ?? false,
       blacklist_start: body.blacklist_start ?? null,
       blacklist_end: body.blacklist_end ?? null,
-    };
+      blacklist_reason: body.blacklist_reason ?? null,
+    })
+    .eq("id", body.id);
 
-    const { data, error } = await supabase
-      .from("customers")
-      .update(updates)
-      .eq("id", body.id)
-      .select("*")
-      .single();
-
-    if (error) {
-      console.error("Customer update error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ customer: data });
-  } catch (err) {
-    console.error("Customer PUT error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  if (error) {
+    console.error("Customer update error:", error);
+    return NextResponse.json({ error }, { status: 500 });
   }
+
+  return NextResponse.json({ success: true });
 }
 
-// ========================================================
-// DELETE — delete customer
-// ========================================================
+/* ======================================================
+   DELETE — delete customer
+====================================================== */
 export async function DELETE(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
 
-    if (!id) {
-      return NextResponse.json({ error: "Missing id" }, { status: 400 });
-    }
-
-    const { error } = await supabase
-      .from("customers")
-      .delete()
-      .eq("id", Number(id));
-
-    if (error) {
-      console.error("Customer delete error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    console.error("Customer DELETE error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  if (!id) {
+    return NextResponse.json(
+      { error: "Customer ID required" },
+      { status: 400 }
+    );
   }
+
+  const { error } = await supabase
+    .from("customers")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error("Customer delete error:", error);
+    return NextResponse.json({ error }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
 }

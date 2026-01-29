@@ -182,7 +182,7 @@ export default function PaymentsPage() {
   const selectedStaff = staffList.find((s) => s.id === selectedStaffId);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 pt-24 px-8">
+    <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8">
       <h1 className="text-3xl font-bold mb-8 text-white">Payments</h1>
 
       <PaymentHeaderStats session={session} />

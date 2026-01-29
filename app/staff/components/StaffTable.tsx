@@ -1,6 +1,8 @@
+//app/staff/components/StaffTable.tsx
+
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { StaffRecord } from "@/lib/types";
 
 interface StaffTableProps {
@@ -9,76 +11,64 @@ interface StaffTableProps {
   onRefresh: () => Promise<void>;
 }
 
+const ROLE_ORDER = [
+  "admin",
+  "owner",
+  "manager",
+  "senior mechanic",
+  "mechanic",
+  "junior mechanic",
+  "apprentice mechanic",
+  "spethal merkernek",
+  "bbrp gov",
+];
+
 export default function StaffTable({
   staff,
   onEdit,
   onRefresh,
 }: StaffTableProps) {
-  const [currentUser, setCurrentUser] = useState<{
-    id: number;
-    role: string;
-    permissions: number;
-  } | null>(null);
+  const [currentUser, setCurrentUser] = useState<StaffRecord | null>(null);
 
-  // Load session
   useEffect(() => {
-    async function loadSession() {
-      const res = await fetch("/api/auth/session", { cache: "no-store" });
-      const json = await res.json();
-      if (!json.staff) return;
-
-      setCurrentUser({
-        id: json.staff.id,
-        role: json.staff.role.toLowerCase(),
-        permissions: json.staff.permissions_level ?? 0,
-      });
-    }
-    loadSession();
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((s) => setCurrentUser(s.staff ?? null));
   }, []);
 
-  // Permission logic
-  function canModify(member: StaffRecord): boolean {
+  function canEdit(target: StaffRecord): boolean {
     if (!currentUser) return false;
-    if (currentUser.id === member.id) return true;
-    if (currentUser.role === "admin") return true;
-    if (currentUser.role === "owner" && member.role !== "admin") return true;
+    if (currentUser.id === target.id) return true;
+
+    const role = currentUser.role;
+
+    if (role === "admin") return true;
+    if (role === "owner")
+      return target.role !== "admin" && target.role !== "owner";
+    if (role === "manager")
+      return (
+        target.role !== "admin" &&
+        target.role !== "owner" &&
+        target.role !== "manager"
+      );
+
     return false;
   }
 
-  function canDelete(member: StaffRecord): boolean {
+  function canDelete(target: StaffRecord): boolean {
     if (!currentUser) return false;
-    if (currentUser.id === member.id) return false;
-    if (currentUser.role === "admin") return true;
-    if (currentUser.role === "owner" && member.role !== "admin") return true;
-    return false;
+    if (currentUser.id === target.id) return false;
+    return currentUser.role === "admin" || currentUser.role === "owner";
   }
 
-  // Sort staff
   const sortedStaff = useMemo(() => {
     return [...staff].sort((a, b) => {
-      if (a.permissions_level !== b.permissions_level) {
-        return b.permissions_level - a.permissions_level;
-      }
+      const ra = ROLE_ORDER.indexOf(a.role);
+      const rb = ROLE_ORDER.indexOf(b.role);
+      if (ra !== rb) return ra - rb;
       return a.name.localeCompare(b.name);
     });
   }, [staff]);
-
-  // Fixed delete handler
-  const handleDelete = async (member: StaffRecord) => {
-    if (!confirm(`Delete ${member.name}?`)) return;
-
-    const res = await fetch(`/api/staff?id=${member.id}`, {
-      method: "DELETE",
-    });
-
-    const json = await res.json();
-    if (!res.ok) {
-      alert(json.error || "Failed to delete staff.");
-      return;
-    }
-
-    await onRefresh();
-  };
 
   return (
     <table className="w-full text-sm">
@@ -92,52 +82,33 @@ export default function StaffTable({
       </thead>
 
       <tbody>
-        {sortedStaff.length === 0 ? (
-          <tr>
-            <td colSpan={4} className="p-6 text-center text-slate-500 italic">
-              No staff found.
+        {sortedStaff.map((member) => (
+          <tr
+            key={member.id}
+            className="border-b border-slate-800 hover:bg-slate-800"
+          >
+            <td className="p-3">{member.name}</td>
+            <td className="p-3">{member.username}</td>
+            <td className="p-3 capitalize">{member.role}</td>
+            <td className="p-3 text-right space-x-4">
+              <button
+                disabled={!canEdit(member)}
+                onClick={() => canEdit(member) && onEdit(member)}
+                className={`text-amber-400 hover:text-amber-300 ${
+                  !canEdit(member) && "opacity-40 cursor-not-allowed"
+                }`}
+              >
+                Edit
+              </button>
+
+              {canDelete(member) && (
+                <button className="text-red-400 hover:text-red-300">
+                  Delete
+                </button>
+              )}
             </td>
           </tr>
-        ) : (
-          sortedStaff.map((member) => {
-            const editable = canModify(member);
-            const deletable = canDelete(member);
-
-            return (
-              <tr
-                key={member.id}
-                className="border-b border-slate-800 hover:bg-slate-800"
-              >
-                <td className="p-3">{member.name}</td>
-                <td className="p-3">{member.username}</td>
-                <td className="p-3 capitalize">{member.role}</td>
-
-                <td className="p-3 text-right space-x-4">
-                  {/* EDIT */}
-                  <button
-                    disabled={!editable}
-                    onClick={() => editable && onEdit(member)}
-                    className={`text-amber-400 hover:text-amber-300 ${
-                      !editable ? "opacity-40 cursor-not-allowed" : ""
-                    }`}
-                  >
-                    Edit
-                  </button>
-
-                  {/* DELETE */}
-                  {deletable && (
-                    <button
-                      onClick={() => handleDelete(member)}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })
-        )}
+        ))}
       </tbody>
     </table>
   );

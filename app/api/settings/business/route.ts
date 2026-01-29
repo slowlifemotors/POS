@@ -1,62 +1,110 @@
-// app/api/settings/business/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getSession } from "@/lib/auth";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!,
-  { auth: { persistSession: false } }
-);
+export const runtime = "nodejs";
 
-// -------------------------------------------------
-// GET BUSINESS SETTINGS
-// -------------------------------------------------
-export async function GET() {
+function getSupabaseAdmin() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY");
+  }
+
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
+    auth: { persistSession: false },
+  });
+}
+
+async function ensureBusinessRowExists() {
+  const supabase = getSupabaseAdmin();
+
   const { data, error } = await supabase
     .from("business_settings")
     .select("*")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (data) return data;
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("business_settings")
+    .insert({ id: 1 })
+    .select("*")
     .single();
 
-  if (error) {
-    console.error("GET business settings error:", error);
-    return NextResponse.json(
-      { error: "Failed to load business settings" },
-      { status: 500 }
-    );
-  }
+  if (insertError) throw insertError;
 
-  return NextResponse.json({ settings: data });
+  return inserted;
 }
 
-// -------------------------------------------------
-// UPDATE BUSINESS SETTINGS
-// -------------------------------------------------
+export async function GET() {
+  try {
+    const data = await ensureBusinessRowExists();
+    return NextResponse.json({ settings: data });
+  } catch (error: any) {
+    console.error("GET business settings error:", error);
+    return NextResponse.json({ error: "Failed to load business settings" }, { status: 500 });
+  }
+}
+
 export async function PUT(req: Request) {
-  const body = await req.json();
+  try {
+    const session = await getSession();
+    if (!session?.staff) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if ((session.staff.permissions_level ?? 0) < 900)
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const { business_name, business_logo_url, theme_color, logo_width, logo_height } =
-    body;
+    const body = await req.json();
 
-  const { data, error } = await supabase
-    .from("business_settings")
-    .update({
+    const {
       business_name,
       business_logo_url,
       theme_color,
       logo_width,
       logo_height,
-    })
-    .eq("id", 1) // always update row 1
-    .select()
-    .single();
 
-  if (error) {
-    console.error("PUT business settings error:", error);
-    return NextResponse.json(
-      { error: "Failed to update business settings" },
-      { status: 500 }
-    );
+      background_image_url,
+      background_opacity,
+      background_darken_enabled,
+      background_darken_strength,
+    } = body;
+
+    const supabase = getSupabaseAdmin();
+    await ensureBusinessRowExists();
+
+    const { data, error } = await supabase
+      .from("business_settings")
+      .update({
+        business_name: business_name ?? null,
+        business_logo_url: business_logo_url ?? null,
+        theme_color: theme_color ?? null,
+        logo_width: logo_width ?? null,
+        logo_height: logo_height ?? null,
+
+        background_image_url: background_image_url ?? null,
+        background_opacity:
+          typeof background_opacity === "number" ? background_opacity : background_opacity ? Number(background_opacity) : null,
+
+        background_darken_enabled: typeof background_darken_enabled === "boolean" ? background_darken_enabled : null,
+        background_darken_strength:
+          typeof background_darken_strength === "number"
+            ? background_darken_strength
+            : background_darken_strength
+            ? Number(background_darken_strength)
+            : null,
+      })
+      .eq("id", 1)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("PUT business settings error:", error);
+      return NextResponse.json({ error: "Failed to update business settings" }, { status: 500 });
+    }
+
+    return NextResponse.json({ settings: data });
+  } catch (error: any) {
+    console.error("PUT business settings unexpected error:", error);
+    return NextResponse.json({ error: "Failed to update business settings" }, { status: 500 });
   }
-
-  return NextResponse.json({ settings: data });
 }

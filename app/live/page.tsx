@@ -32,7 +32,7 @@ export default function LivePage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pt-24 px-8">
+    <div className="min-h-screen bg-transparent text-slate-100 pt-24 px-8">
       <h1 className="text-3xl font-bold mb-6 text-emerald-400">Live Staff</h1>
 
       <div className="bg-slate-900 p-6 rounded-xl shadow border border-slate-700">

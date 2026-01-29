@@ -162,7 +162,7 @@ export default function TimesheetPage() {
     session?.role === "admin" || session?.role === "owner";
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 pt-24 px-8 pb-20">
+    <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8 pb-20">
       {/* ============================================
           HEADER SUMMARY BAR
       ============================================ */}

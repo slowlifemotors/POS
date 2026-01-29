@@ -115,7 +115,7 @@ export default function SalesPage() {
   }, [fromDate, toDate]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white px-8 pt-24">
+    <div className="min-h-screen bg-transparent text-white px-8 pt-24">
       <h1 className="text-3xl font-bold mb-6">Sales</h1>
 
       {/* DATE FILTERS */}

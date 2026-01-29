@@ -70,7 +70,7 @@ export default function DiscountsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-50 pt-24 px-8">
+    <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-3xl font-bold">Discounts</h2>
 

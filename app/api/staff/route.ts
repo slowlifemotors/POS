@@ -95,16 +95,29 @@ function canModify(caller: StaffRecord, target: StaffRecord): string | null {
 // ---------------------------------------------------------
 function canAssignRole(
   caller: StaffRecord,
-  newRole: { name: string; permissions_level: number }
+  newRole: { name: string }
 ): string | null {
-  const newName = newRole.name.toLowerCase();
+  const role = newRole.name.toLowerCase();
 
-  if (caller.role === "owner" && newName === "admin") {
-    return "Owners cannot assign admin role.";
+  if (role === "owner" && caller.role !== "admin") {
+    return "Only admins can assign owner role.";
+  }
+
+  if (
+    role === "manager" &&
+    caller.role !== "admin" &&
+    caller.role !== "owner"
+  ) {
+    return "Only admins or owners can assign manager role.";
+  }
+
+  if (caller.role === "manager" && ["admin", "owner", "manager"].includes(role)) {
+    return "Managers cannot assign this role.";
   }
 
   return null;
 }
+
 
 // ---------------------------------------------------------
 // GET STAFF LIST  (FIXED TO ALLOW ALL ROLES)

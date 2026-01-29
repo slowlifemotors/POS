@@ -19,7 +19,7 @@ export default function POSClient({
   const pos = usePOS({ staffId, staffName });
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-50">
+    <div className="flex h-screen bg-transparent text-slate-50">
       {/* LEFT SIDE – ITEMS GRID */}
       <div className="flex-1 pt-24 p-6 overflow-y-auto">
         <POSItems
