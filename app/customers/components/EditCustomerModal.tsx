@@ -1,4 +1,4 @@
-//  app/customers/components/EditCustomerModal.tsx
+// app/customers/components/EditCustomerModal.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -7,7 +7,6 @@ export interface CustomerRecord {
   id: number;
   name: string;
   phone: string | null;
-  email: string | null;
   discount_id: number | null;
 }
 
@@ -35,7 +34,6 @@ export default function EditCustomerModal({
   // ---------------------------------------------------------
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
-  const [email, setEmail] = useState(customer?.email ?? "");
   const [discountId, setDiscountId] = useState<number | null>(
     customer?.discount_id ?? null
   );
@@ -91,7 +89,6 @@ export default function EditCustomerModal({
       id: customer?.id,
       name,
       phone,
-      email,
     };
 
     if (canModifyDiscount) {
@@ -142,13 +139,6 @@ export default function EditCustomerModal({
             onChange={(e) => setPhone(e.target.value)}
           />
 
-          <input
-            className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
-            placeholder="Email"
-            value={email ?? ""}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-
           {/* Discount Dropdown — only owner/admin can use */}
           <select
             disabled={!canModifyDiscount}
@@ -185,7 +175,7 @@ export default function EditCustomerModal({
           <button
             onClick={save}
             disabled={saving}
-            className="px-4 py-2 bg-[color:var(--accent)] hover:[color:var(--accent-hover)] rounded text-white disabled:opacity-50"
+            className="px-4 py-2 bg-[color:var(--accent)] hover:bg-[color:var(--accent-hover)] rounded text-white disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save"}
           </button>
