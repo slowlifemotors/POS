@@ -175,7 +175,7 @@ export default function EditCustomerModal({
           <button
             onClick={save}
             disabled={saving}
-            className="px-4 py-2 bg-[color:var(--accent)] hover:bg-[color:var(--accent-hover)] rounded text-white disabled:opacity-50"
+            className="px-4 py-2 bg-(--accent) hover:bg-(--accent-hover) rounded text-white disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save"}
           </button>

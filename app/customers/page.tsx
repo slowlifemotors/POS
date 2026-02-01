@@ -163,8 +163,8 @@ export default function CustomersPage() {
               setShowModal(true);
             }}
             className="px-4 py-2 rounded-lg font-semibold
-              bg-[color:var(--accent)]
-              hover:bg-[color:var(--accent-hover)]"
+              bg-(--accent)
+              hover:bg-(--accent-hover)"
             type="button"
           >
             + Add Customer
