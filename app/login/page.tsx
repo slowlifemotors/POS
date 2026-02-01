@@ -1,3 +1,4 @@
+//app/login/page.tsx
 "use client";
 
 import React, { useState } from "react";
@@ -45,11 +46,17 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-6">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl p-8 shadow-2xl">
-
+    <div className="min-h-screen flex items-center justify-center bg-transparent p-6">
+      <div className="w-full max-w-md bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-8 shadow-2xl">
         <div className="flex flex-col items-center mb-6">
-          <Image src="/logo.png" width={80} height={80} alt="logo" />
+          <Image
+            src="/logo.png"
+            width={80}
+            height={80}
+            alt="logo"
+            priority
+            className="h-20 w-20 object-contain"
+          />
           <h1 className="text-2xl font-bold text-slate-50 mt-3">
             Galaxy Nightclub POS
           </h1>
@@ -60,15 +67,15 @@ export default function LoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
-
           <div>
             <label className="block text-slate-300 mb-1">Username</label>
             <input
               type="text"
-              className="w-full p-3 bg-slate-800 border border-slate-700 text-slate-50 rounded-lg"
+              className="w-full p-3 bg-slate-800/80 border border-slate-700 text-slate-50 rounded-lg"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
+              autoComplete="username"
             />
           </div>
 
@@ -76,10 +83,11 @@ export default function LoginPage() {
             <label className="block text-slate-300 mb-1">Password</label>
             <input
               type="password"
-              className="w-full p-3 bg-slate-800 border border-slate-700 text-slate-50 rounded-lg"
+              className="w-full p-3 bg-slate-800/80 border border-slate-700 text-slate-50 rounded-lg"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="current-password"
             />
           </div>
 
