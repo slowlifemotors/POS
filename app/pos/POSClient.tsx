@@ -26,15 +26,12 @@ export default function POSClient({
           items={pos.items}
           searchTerm={pos.searchTerm}
           setSearchTerm={pos.setSearchTerm}
-          selectedCategory={pos.selectedCategory}
-          setSelectedCategory={pos.setSelectedCategory}
           addToCart={pos.addToCart}
         />
       </div>
 
       {/* RIGHT SIDE – CART + CUSTOMER + CHECKOUT */}
       <div className="w-[380px] bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
-
         {/* OPEN CUSTOMER MODAL BUTTON */}
         <button
           onClick={() => pos.setShowCustomerModal(true)}
