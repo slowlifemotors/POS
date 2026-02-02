@@ -1,175 +1,98 @@
-// app/login/page.tsx
-"use client";
+// app/settings/page.tsx
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth";
 
-import React, { useEffect, useState } from "react";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
+export const runtime = "nodejs";
 
-type BusinessSettings = {
-  business_name: string;
-  business_logo_url: string | null;
-  theme_color: string;
-  logo_width: number | null;
-  logo_height: number | null;
-};
+function roleLower(role: unknown) {
+  return typeof role === "string" ? role.toLowerCase().trim() : "";
+}
 
-export default function LoginPage() {
-  const router = useRouter();
+export default async function SettingsPage() {
+  const session = await getSession();
 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  // Not logged in → login
+  if (!session?.staff) {
+    redirect("/login");
+  }
 
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const role = roleLower(session.staff.role);
+  const permissions = session.staff.permissions_level ?? 0;
 
-  // Brand settings (logo/title)
-  const [businessName, setBusinessName] = useState("Slowlife Motors POS");
-  const [logoUrl, setLogoUrl] = useState<string>("/logo.png");
-  const [logoWidth, setLogoWidth] = useState<number>(80);
-  const [logoHeight, setLogoHeight] = useState<number>(80);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadBranding() {
-      try {
-        const res = await fetch("/api/settings/business", { cache: "no-store" });
-        const json = await res.json();
-
-        const st: BusinessSettings | undefined = json?.settings;
-        if (!st || cancelled) return;
-
-        setBusinessName(
-          typeof st.business_name === "string" && st.business_name.trim()
-            ? st.business_name
-            : "Slowlife Motors POS"
-        );
-
-        // Use configured logo if present, otherwise fallback to local
-        const url =
-          typeof st.business_logo_url === "string" && st.business_logo_url.trim()
-            ? st.business_logo_url
-            : "/logo.png";
-        setLogoUrl(url);
-
-        // Use configured dimensions, otherwise fallback defaults
-        const w =
-          typeof st.logo_width === "number" && Number.isFinite(st.logo_width)
-            ? Math.max(10, Math.min(400, st.logo_width))
-            : 80;
-
-        const h =
-          typeof st.logo_height === "number" && Number.isFinite(st.logo_height)
-            ? Math.max(10, Math.min(400, st.logo_height))
-            : 80;
-
-        setLogoWidth(w);
-        setLogoHeight(h);
-      } catch {
-        // Non-fatal: keep defaults
-      }
-    }
-
-    loadBranding();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg("");
-
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ username, password }),
-      });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.success) {
-        setErrorMsg(result.error || "Invalid username or password.");
-        setLoading(false);
-        return;
-      }
-
-      router.push("/pos");
-    } catch {
-      setErrorMsg("Server error. Try again.");
-      setLoading(false);
-    }
-  };
+  // Optional: restrict settings to manager+
+  if (permissions < 800) {
+    redirect("/pos");
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-transparent p-6">
-      <div className="w-full max-w-md bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-8 shadow-2xl">
-        <div className="flex flex-col items-center mb-6">
-          <div
-            className="flex items-center justify-center"
-            style={{ width: logoWidth, height: logoHeight }}
-          >
-            <Image
-              src={logoUrl}
-              width={logoWidth}
-              height={logoHeight}
-              alt="logo"
-              priority
-              className="object-contain"
-            />
-          </div>
-
-          <h1 className="text-2xl font-bold text-slate-50 mt-3">
-            {businessName}
-          </h1>
+    <div className="min-h-screen pt-24 px-8 text-slate-100">
+      <div className="max-w-5xl mx-auto">
+        {/* HEADER */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-white">Settings</h1>
+          <p className="text-slate-400 mt-1">
+            Manage business configuration and system rules.
+          </p>
         </div>
 
-        {errorMsg && (
-          <div className="mb-4 text-red-400 text-center">{errorMsg}</div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-slate-300 mb-1">Username</label>
-            <input
-              type="text"
-              className="w-full p-3 bg-slate-800/80 border border-slate-700 text-slate-50 rounded-lg"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              autoComplete="username"
-            />
-          </div>
-
-          <div>
-            <label className="block text-slate-300 mb-1">Password</label>
-            <input
-              type="password"
-              className="w-full p-3 bg-slate-800/80 border border-slate-700 text-slate-50 rounded-lg"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full py-3 rounded-lg text-white font-semibold transition ${
-              loading
-                ? "bg-slate-700 cursor-not-allowed"
-                : "bg-(--accent) hover:bg-(--accent-hover)"
-            }`}
+        {/* SETTINGS GRID */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* COMMISSION */}
+          <Link
+            href="/settings/commission"
+            className="block bg-slate-900 border border-slate-700 rounded-xl p-6 hover:bg-slate-800 transition"
           >
-            {loading ? "Checking..." : "Login"}
-          </button>
-        </form>
+            <h2 className="text-xl font-bold text-white mb-2">
+              Commission & Pay
+            </h2>
+            <p className="text-slate-400 text-sm">
+              Set commission percentages, hourly rates, and staff discount rules.
+            </p>
+          </Link>
+
+          {/* BUSINESS */}
+          <Link
+            href="/settings/business"
+            className="block bg-slate-900 border border-slate-700 rounded-xl p-6 hover:bg-slate-800 transition"
+          >
+            <h2 className="text-xl font-bold text-white mb-2">
+              Business Settings
+            </h2>
+            <p className="text-slate-400 text-sm">
+              Branding, logo, business name, and theme configuration.
+            </p>
+          </Link>
+
+          {/* STAFF (if you had it) */}
+          <Link
+            href="/staff"
+            className="block bg-slate-900 border border-slate-700 rounded-xl p-6 hover:bg-slate-800 transition"
+          >
+            <h2 className="text-xl font-bold text-white mb-2">
+              Staff Management
+            </h2>
+            <p className="text-slate-400 text-sm">
+              Add, edit, activate, or deactivate staff accounts.
+            </p>
+          </Link>
+
+          {/* OPTIONAL PLACEHOLDER */}
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 opacity-60">
+            <h2 className="text-xl font-bold text-white mb-2">
+              More Settings
+            </h2>
+            <p className="text-slate-400 text-sm">
+              Additional system options can live here later.
+            </p>
+          </div>
+        </div>
+
+        {/* FOOTER INFO */}
+        <div className="mt-10 text-xs text-slate-500">
+          Logged in as <span className="text-slate-300">{session.staff.username}</span>{" "}
+          ({role})
+        </div>
       </div>
     </div>
   );
