@@ -207,8 +207,8 @@ export default function PaymentsPage() {
             <button
               onClick={() => setConfirmOpen(true)}
               className="mt-6 px-6 py-3 rounded-lg font-semibold
-                bg-[color:var(--accent)]
-                hover:bg-[color:var(--accent-hover)]
+                bg-(--accent)
+                hover:bg-(--accent-hover)
               "
             >
               Confirm Payment
