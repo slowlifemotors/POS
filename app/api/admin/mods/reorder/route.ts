@@ -54,7 +54,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "items is required" }, { status: 400 });
     }
 
-    // Basic validation
     for (const it of items) {
       const id = typeof it?.id === "string" ? it.id.trim() : "";
       const order = Number(it?.display_order);
@@ -65,7 +64,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Ensure all belong to the provided parent_id (avoid cross-parent corruption)
     const ids = items.map((i) => i.id);
 
     const { data: existing, error: fetchErr } = await supabaseServer
@@ -75,7 +73,18 @@ export async function POST(req: Request) {
 
     if (fetchErr) {
       console.error("POST /api/admin/mods/reorder fetch error:", fetchErr);
-      return NextResponse.json({ error: "Failed to validate mods" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Failed to validate mods",
+          details: {
+            message: fetchErr.message,
+            code: (fetchErr as any).code ?? null,
+            hint: (fetchErr as any).hint ?? null,
+            details: (fetchErr as any).details ?? null,
+          },
+        },
+        { status: 500 }
+      );
     }
 
     const existingById = new Map<string, any>();
@@ -89,14 +98,10 @@ export async function POST(req: Request) {
 
       const rowParent = row.parent_id ? String(row.parent_id) : null;
       if (rowParent !== parent_id) {
-        return NextResponse.json(
-          { error: "All items must share the same parent_id" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "All items must share the same parent_id" }, { status: 400 });
       }
     }
 
-    // Update one-by-one (simple + safe; fast enough for this tree size)
     for (const it of items) {
       const { error } = await supabaseServer
         .from("mods")
@@ -105,7 +110,18 @@ export async function POST(req: Request) {
 
       if (error) {
         console.error("POST /api/admin/mods/reorder update error:", error);
-        return NextResponse.json({ error: "Failed to reorder mods" }, { status: 500 });
+        return NextResponse.json(
+          {
+            error: "Failed to reorder mods",
+            details: {
+              message: error.message,
+              code: (error as any).code ?? null,
+              hint: (error as any).hint ?? null,
+              details: (error as any).details ?? null,
+            },
+          },
+          { status: 500 }
+        );
       }
     }
 

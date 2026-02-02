@@ -52,20 +52,33 @@ function parsePricing(input: any, is_menu: boolean) {
   const pricing_value_raw = input?.pricing_value;
 
   if (pricing_type === null) {
-    if (pricing_value_raw === null || pricing_value_raw === undefined || pricing_value_raw === "") {
+    if (
+      pricing_value_raw === null ||
+      pricing_value_raw === undefined ||
+      pricing_value_raw === ""
+    ) {
       return { ok: true as const, pricing_type: null, pricing_value: null };
     }
-    return { ok: false as const, error: "pricing_type is required when pricing_value is provided." };
+    return {
+      ok: false as const,
+      error: "pricing_type is required when pricing_value is provided.",
+    };
   }
 
   const pricing_value = Number(pricing_value_raw);
 
   if (!Number.isFinite(pricing_value) || pricing_value < 0) {
-    return { ok: false as const, error: "pricing_value must be a valid number (>= 0)." };
+    return {
+      ok: false as const,
+      error: "pricing_value must be a valid number (>= 0).",
+    };
   }
 
   if (pricing_type === "percentage" && pricing_value > 100) {
-    return { ok: false as const, error: "percentage pricing_value must be <= 100." };
+    return {
+      ok: false as const,
+      error: "percentage pricing_value must be <= 100.",
+    };
   }
 
   return { ok: true as const, pricing_type, pricing_value };
@@ -82,7 +95,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const body = await req.json();
 
-    // Pull existing row so we can validate pricing with final is_menu value
     const { data: existing, error: fetchErr } = await supabaseServer
       .from("mods")
       .select("id, is_menu")
@@ -91,14 +103,22 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     if (fetchErr) {
       console.error("PATCH /api/admin/mods/[id] fetch error:", fetchErr);
-      return NextResponse.json({ error: "Failed to load mod" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Failed to load mod",
+          details: {
+            message: fetchErr.message,
+            code: (fetchErr as any).code ?? null,
+            hint: (fetchErr as any).hint ?? null,
+            details: (fetchErr as any).details ?? null,
+          },
+        },
+        { status: 500 }
+      );
     }
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const name =
-      typeof body?.name === "string"
-        ? body.name.trim()
-        : undefined;
+    const name = typeof body?.name === "string" ? body.name.trim() : undefined;
 
     const parent_id =
       body?.parent_id !== undefined ? parseUuid(body.parent_id) : undefined;
@@ -108,13 +128,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         ? Number(body.display_order)
         : undefined;
 
-    const is_menu =
-      body?.is_menu !== undefined ? Boolean(body.is_menu) : undefined;
+    const is_menu = body?.is_menu !== undefined ? Boolean(body.is_menu) : undefined;
 
     const active =
-      body?.active !== undefined && typeof body.active === "boolean"
-        ? body.active
-        : undefined;
+      body?.active !== undefined && typeof body.active === "boolean" ? body.active : undefined;
 
     const finalIsMenu = is_menu !== undefined ? is_menu : Boolean(existing.is_menu);
 
@@ -136,7 +153,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (is_menu !== undefined) update.is_menu = is_menu;
     if (active !== undefined) update.active = active;
 
-    // Pricing always set based on validation rules above:
     update.pricing_type = pricing.pricing_type;
     update.pricing_value = pricing.pricing_value;
 
@@ -149,7 +165,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     if (error) {
       console.error("PATCH /api/admin/mods/[id] error:", error);
-      return NextResponse.json({ error: "Failed to update mod/menu" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Failed to update mod/menu",
+          details: {
+            message: error.message,
+            code: (error as any).code ?? null,
+            hint: (error as any).hint ?? null,
+            details: (error as any).details ?? null,
+          },
+        },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ mod: data }, { status: 200 });
@@ -172,10 +199,20 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
 
     if (error) {
       console.error("DELETE /api/admin/mods/[id] error:", error);
-      return NextResponse.json({ error: "Failed to delete mod/menu" }, { status: 500 });
+      return NextResponse.json(
+        {
+          error: "Failed to delete mod/menu",
+          details: {
+            message: error.message,
+            code: (error as any).code ?? null,
+            hint: (error as any).hint ?? null,
+            details: (error as any).details ?? null,
+          },
+        },
+        { status: 500 }
+      );
     }
 
-    // children cascade due to FK on delete cascade
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (err) {
     console.error("DELETE /api/admin/mods/[id] fatal:", err);
