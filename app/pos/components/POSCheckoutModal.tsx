@@ -19,15 +19,15 @@ export default function POSCheckoutModal({
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 rounded-xl p-6 w-[380px] shadow-xl border border-slate-700 space-y-4">
-
         <h2 className="text-2xl font-bold mb-2">Complete Sale</h2>
 
         <p className="text-lg">
           Total:{" "}
-          <span className="font-bold text-emerald-400">${finalTotal.toFixed(2)}</span>
+          <span className="font-bold text-emerald-400">
+            ${finalTotal.toFixed(2)}
+          </span>
         </p>
 
-        {/* PAYMENT METHOD */}
         <div>
           <label className="block text-sm mb-1">Payment Method</label>
           <select
@@ -38,7 +38,6 @@ export default function POSCheckoutModal({
             <option value="cash">Cash</option>
             <option value="card">Card</option>
 
-            {/* DIRECT TAB OPTIONS */}
             {tabs
               .filter((t) => t.active)
               .map((t) => (
@@ -49,7 +48,6 @@ export default function POSCheckoutModal({
           </select>
         </div>
 
-        {/* CONFIRM BUTTON */}
         <button
           className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-semibold text-white"
           onClick={() => onConfirm(paymentMethod)}
@@ -63,7 +61,6 @@ export default function POSCheckoutModal({
         >
           Cancel
         </button>
-
       </div>
     </div>
   );

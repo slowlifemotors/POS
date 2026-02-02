@@ -48,6 +48,9 @@ export default function NavBar({
   // Management dropdown only for admin/owner/manager
   const canAccessManagement = isAdmin || isOwner || isManager;
 
+  // Mods management ONLY for admin/owner
+  const canManageMods = isAdmin || isOwner;
+
   const [logoSrc, setLogoSrc] = useState(businessLogo || "/logo.png");
 
   const handleLogout = async () => {
@@ -63,7 +66,6 @@ export default function NavBar({
 
       {
         label: "Staff",
-        // ✅ Staff List moved here and visible to ALL roles
         items: [
           { label: "Staff List", href: "/staff" },
           { label: "Timesheet", href: "/timesheet" },
@@ -76,8 +78,11 @@ export default function NavBar({
         label: "Management",
         hide: !canAccessManagement,
         items: [
-          // ✅ Removed /staff from Management
           { label: "Vehicles", href: "/items" },
+
+          // ✅ New: Mods / Items (Admin + Owner ONLY)
+          ...(canManageMods ? [{ label: "Mods / Items", href: "/mods" }] : []),
+
           { label: "Live Staff", href: "/live" },
           { label: "Sales Log", href: "/sales" },
           { label: "Commission Settings", href: "/settings/commission" },
@@ -87,6 +92,7 @@ export default function NavBar({
         ],
         activeMatch: [
           "/items",
+          "/mods",
           "/live",
           "/sales",
           "/settings/commission",
@@ -96,13 +102,12 @@ export default function NavBar({
         ],
       },
     ];
-  }, [canAccessManagement]);
+  }, [canAccessManagement, canManageMods]);
 
   const isActive = (matches?: string[]) =>
     matches?.some((m) => pathname.startsWith(m)) ?? false;
 
   return (
-    // ✅ isolate + z-index ensures dropdowns stay above backdrop-blur stacking contexts
     <nav className="fixed top-0 left-0 w-full bg-slate-900 border-b border-slate-800 shadow-md z-[1000] isolate">
       <div className="flex items-center justify-between px-6 py-3">
         {/* LOGO + BUSINESS NAME */}
