@@ -1,3 +1,4 @@
+// app/api/settings/business/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getSession } from "@/lib/auth";
@@ -12,6 +13,11 @@ function getSupabaseAdmin() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
   });
+}
+
+function canManageBusinessSettings(role: unknown) {
+  const r = typeof role === "string" ? role.toLowerCase() : "";
+  return r === "admin" || r === "owner" || r === "manager";
 }
 
 async function ensureBusinessRowExists() {
@@ -50,9 +56,14 @@ export async function GET() {
 export async function PUT(req: Request) {
   try {
     const session = await getSession();
-    if (!session?.staff) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-    if ((session.staff.permissions_level ?? 0) < 900)
+    if (!session?.staff) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    // ✅ Match UI permission rule: Admin/Owner/Manager
+    if (!canManageBusinessSettings(session.staff.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     const body = await req.json();
 
@@ -83,9 +94,17 @@ export async function PUT(req: Request) {
 
         background_image_url: background_image_url ?? null,
         background_opacity:
-          typeof background_opacity === "number" ? background_opacity : background_opacity ? Number(background_opacity) : null,
+          typeof background_opacity === "number"
+            ? background_opacity
+            : background_opacity
+            ? Number(background_opacity)
+            : null,
 
-        background_darken_enabled: typeof background_darken_enabled === "boolean" ? background_darken_enabled : null,
+        background_darken_enabled:
+          typeof background_darken_enabled === "boolean"
+            ? background_darken_enabled
+            : null,
+
         background_darken_strength:
           typeof background_darken_strength === "number"
             ? background_darken_strength
