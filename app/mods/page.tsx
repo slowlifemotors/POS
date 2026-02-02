@@ -17,7 +17,9 @@ type VehicleMod = {
   id: number;
   key: string;
   label: string;
+  pricing_type: "percent" | "flat";
   percent: number;
+  flat_price: number | null;
   section: string | null;
   sort_order: number;
   active: boolean;
@@ -42,7 +44,9 @@ export default function ModsPage() {
 
   const [keyVal, setKeyVal] = useState("");
   const [label, setLabel] = useState("");
+  const [pricingType, setPricingType] = useState<"percent" | "flat">("percent");
   const [percent, setPercent] = useState("");
+  const [flatPrice, setFlatPrice] = useState("");
   const [section, setSection] = useState("");
   const [sortOrder, setSortOrder] = useState("0");
   const [active, setActive] = useState(true);
@@ -80,7 +84,11 @@ export default function ModsPage() {
       setEditing(m);
       setKeyVal(m.key);
       setLabel(m.label);
+
+      setPricingType(m.pricing_type ?? "percent");
       setPercent(String(m.percent ?? 0));
+      setFlatPrice(m.flat_price != null ? String(m.flat_price) : "");
+
       setSection(m.section ?? "");
       setSortOrder(String(m.sort_order ?? 0));
       setActive(Boolean(m.active));
@@ -88,7 +96,11 @@ export default function ModsPage() {
       setEditing(null);
       setKeyVal("");
       setLabel("");
+
+      setPricingType("percent");
       setPercent("");
+      setFlatPrice("");
+
       setSection("");
       setSortOrder("0");
       setActive(true);
@@ -101,14 +113,21 @@ export default function ModsPage() {
     if (!keyVal.trim()) return alert("Key is required.");
     if (!label.trim()) return alert("Label is required.");
 
-    const pct = Number(percent);
-    if (!Number.isFinite(pct) || pct < 0) return alert("Percent must be a valid number (>= 0).");
+    if (pricingType === "percent") {
+      const pct = Number(percent);
+      if (!Number.isFinite(pct) || pct < 0) return alert("Percent must be a valid number (>= 0).");
+    } else {
+      const fp = Number(flatPrice);
+      if (!Number.isFinite(fp) || fp < 0) return alert("Flat price must be a valid number (>= 0).");
+    }
 
     const payload = {
       id: editing?.id,
       key: keyVal.trim(),
       label: label.trim(),
-      percent: pct,
+      pricing_type: pricingType,
+      percent: pricingType === "percent" ? Number(percent) : 0,
+      flat_price: pricingType === "flat" ? Number(flatPrice) : null,
       section: section.trim() || null,
       sort_order: Number(sortOrder || 0),
       active,
@@ -172,13 +191,19 @@ export default function ModsPage() {
       <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8">
         <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 shadow-lg backdrop-blur">
           <h2 className="text-2xl font-bold text-red-400">Forbidden</h2>
-          <p className="text-slate-300 mt-2">
-            You do not have permission to view this page.
-          </p>
+          <p className="text-slate-300 mt-2">You do not have permission to view this page.</p>
         </div>
       </div>
     );
   }
+
+  const pricingLabel = (m: VehicleMod) => {
+    if (m.pricing_type === "flat") {
+      const v = Number(m.flat_price ?? 0);
+      return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return `${Number(m.percent ?? 0).toFixed(2)}%`;
+  };
 
   return (
     <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8">
@@ -207,7 +232,7 @@ export default function ModsPage() {
             <tr>
               <th className="p-3 text-left">Key</th>
               <th className="p-3 text-left">Label</th>
-              <th className="p-3 text-left">Percent</th>
+              <th className="p-3 text-left">Pricing</th>
               <th className="p-3 text-left">Section</th>
               <th className="p-3 text-left">Sort</th>
               <th className="p-3 text-left">Active</th>
@@ -217,13 +242,10 @@ export default function ModsPage() {
 
           <tbody>
             {filtered.map((m) => (
-              <tr
-                key={m.id}
-                className="border-b border-slate-800 hover:bg-slate-800"
-              >
+              <tr key={m.id} className="border-b border-slate-800 hover:bg-slate-800">
                 <td className="p-3 font-mono text-slate-200">{m.key}</td>
                 <td className="p-3">{m.label}</td>
-                <td className="p-3">{Number(m.percent).toFixed(2)}%</td>
+                <td className="p-3">{pricingLabel(m)}</td>
                 <td className="p-3">{m.section ?? "-"}</td>
                 <td className="p-3">{m.sort_order ?? 0}</td>
                 <td className="p-3">{m.active ? "Yes" : "No"}</td>
@@ -252,10 +274,8 @@ export default function ModsPage() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
-          <div className="bg-slate-900 p-6 rounded-xl w-[520px] border border-slate-700 shadow-2xl">
-            <h2 className="text-2xl font-bold mb-4">
-              {editing ? "Edit Mod" : "Add Mod"}
-            </h2>
+          <div className="bg-slate-900 p-6 rounded-xl w-[560px] border border-slate-700 shadow-2xl">
+            <h2 className="text-2xl font-bold mb-4">{editing ? "Edit Mod" : "Add Mod"}</h2>
 
             <div className="space-y-4">
               <div className="flex gap-4">
@@ -274,14 +294,34 @@ export default function ModsPage() {
               </div>
 
               <div className="flex gap-4">
-                <input
-                  type="number"
-                  className="flex-1 p-2 bg-slate-800 border border-slate-700 rounded"
-                  placeholder="Percent (e.g. 11)"
-                  value={percent}
-                  onChange={(e) => setPercent(e.target.value)}
-                  step="0.01"
-                />
+                <select
+                  className="w-48 p-2 bg-slate-800 border border-slate-700 rounded"
+                  value={pricingType}
+                  onChange={(e) => setPricingType(e.target.value as "percent" | "flat")}
+                >
+                  <option value="percent">Percent of base</option>
+                  <option value="flat">Flat price</option>
+                </select>
+
+                {pricingType === "percent" ? (
+                  <input
+                    type="number"
+                    className="flex-1 p-2 bg-slate-800 border border-slate-700 rounded"
+                    placeholder="Percent (e.g. 11)"
+                    value={percent}
+                    onChange={(e) => setPercent(e.target.value)}
+                    step="0.01"
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    className="flex-1 p-2 bg-slate-800 border border-slate-700 rounded"
+                    placeholder="Flat price (e.g. 2000)"
+                    value={flatPrice}
+                    onChange={(e) => setFlatPrice(e.target.value)}
+                    step="0.01"
+                  />
+                )}
 
                 <input
                   className="flex-1 p-2 bg-slate-800 border border-slate-700 rounded"
@@ -291,7 +331,7 @@ export default function ModsPage() {
                 />
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex gap-4 items-center">
                 <input
                   type="number"
                   className="w-40 p-2 bg-slate-800 border border-slate-700 rounded"
@@ -311,22 +351,16 @@ export default function ModsPage() {
               </div>
 
               <p className="text-xs text-slate-400">
-                Key is normalized server-side (lowercase, underscores, a-z0-9 only).
+                Percent mods calculate from vehicle base price. Flat mods ignore base price.
               </p>
             </div>
 
             <div className="mt-6 flex justify-between">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 bg-slate-700 rounded"
-              >
+              <button onClick={() => setShowModal(false)} className="px-4 py-2 bg-slate-700 rounded">
                 Cancel
               </button>
 
-              <button
-                onClick={saveMod}
-                className="px-4 py-2 bg-emerald-600 rounded font-semibold"
-              >
+              <button onClick={saveMod} className="px-4 py-2 bg-emerald-600 rounded font-semibold">
                 Save
               </button>
             </div>
