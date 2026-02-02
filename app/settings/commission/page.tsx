@@ -12,50 +12,82 @@ interface CommissionRate {
 export default function CommissionSettingsPage() {
   const [session, setSession] = useState<null | {
     role: string;
-    permissions_level: number;
+    permissions_level?: number;
   }>(null);
 
   const [rates, setRates] = useState<CommissionRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const isManagerOrAbove =
-    session?.permissions_level !== undefined &&
-    session.permissions_level >= 800;
+  const isManagerOrAbove = (() => {
+    // Prefer permissions_level if present, otherwise fall back to role
+    const r = (session?.role ?? "").toLowerCase();
+    if (typeof session?.permissions_level === "number") {
+      return session.permissions_level >= 800;
+    }
+    return r === "manager" || r === "admin" || r === "owner";
+  })();
 
-  const isAdminOrOwner =
-    session?.role === "admin" || session?.role === "owner";
+  const isAdminOrOwner = (() => {
+    const r = (session?.role ?? "").toLowerCase();
+    return r === "admin" || r === "owner";
+  })();
+
+  const canEdit = isAdminOrOwner;
 
   // ---------------------------------------------------------
-  // LOAD SESSION + COMMISSION + HOURLY RATES
+  // LOAD SESSION + RATES
   // ---------------------------------------------------------
   useEffect(() => {
+    let alive = true;
+
     async function load() {
-      const sRes = await fetch("/api/auth/session", { cache: "no-store" });
-      const sJson = await sRes.json();
-      setSession(sJson.staff || null);
+      setLoading(true);
+      setErrorMsg(null);
 
-      const rRes = await fetch("/api/settings", { cache: "no-store" });
-      if (!rRes.ok) throw new Error("Settings fetch failed.");
+      try {
+        const sRes = await fetch("/api/auth/session", { cache: "no-store" });
+        const sJson = await sRes.json();
 
-      const data = await rRes.json();
+        if (!alive) return;
+        setSession(sJson?.staff || null);
 
-      const merged: CommissionRate[] = data.commission_rates.map((cr: any) => {
-        const hr = data.hourly_rates.find(
-          (h: any) => h.role.toLowerCase() === cr.role.toLowerCase()
-        );
-        return {
-          role: cr.role,
-          rate: Number(cr.rate),
-          hourly_rate: hr ? Number(hr.hourly_rate) : 0,
-        };
-      });
+        const rRes = await fetch("/api/settings/commission", { cache: "no-store" });
+        const rJson = await rRes.json();
 
-      setRates(merged);
-      setLoading(false);
+        if (!alive) return;
+
+        if (!rRes.ok) {
+          setRates([]);
+          setErrorMsg(rJson?.error || "Failed to load commission settings.");
+          return;
+        }
+
+        const list = Array.isArray(rJson?.roles) ? rJson.roles : [];
+        const mapped: CommissionRate[] = list.map((x: any) => ({
+          role: String(x.role ?? ""),
+          rate: Number(x.rate ?? 0),
+          hourly_rate: Number(x.hourly_rate ?? 0),
+        }));
+
+        setRates(mapped);
+      } catch (err: any) {
+        console.error("Commission settings load error:", err);
+        if (!alive) return;
+        setRates([]);
+        setErrorMsg("Failed to load settings (check server logs).");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
     }
 
     load();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   if (!loading && !isManagerOrAbove) {
@@ -66,27 +98,37 @@ export default function CommissionSettingsPage() {
     );
   }
 
-  const canEdit = isAdminOrOwner;
-
   async function saveChanges() {
     if (!canEdit) return;
 
     setSaving(true);
+    setErrorMsg(null);
 
-    for (const entry of rates) {
-      await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: entry.role,
-          rate: entry.rate,
-          hourly_rate: entry.hourly_rate,
-        }),
-      });
+    try {
+      for (const entry of rates) {
+        const res = await fetch("/api/settings/commission", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: entry.role,
+            rate: entry.rate,
+            hourly_rate: entry.hourly_rate,
+          }),
+        });
+
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.error || `Failed updating role: ${entry.role}`);
+        }
+      }
+
+      alert("Settings updated successfully!");
+    } catch (err: any) {
+      console.error("Save changes error:", err);
+      setErrorMsg(err?.message || "Failed to save changes.");
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
-    alert("Settings updated successfully!");
   }
 
   if (loading) {
@@ -99,15 +141,22 @@ export default function CommissionSettingsPage() {
 
   return (
     <div className="min-h-screen pt-24 px-8 text-slate-100">
-      {/* PAGE TITLE — WHITE EXACTLY LIKE YOUR OTHER SETTINGS PAGES */}
       <h1 className="text-3xl font-bold mb-4 text-white">
         Commission Settings
       </h1>
 
       <p className="text-slate-400 mb-6">
-        Commission is calculated on <strong>profit (price – cost_price)</strong>.<br />
+        Commission is calculated on <strong>profit</strong>, where profit is defined as{" "}
+        <strong>(order total / 2) minus discount</strong>.
+        <br />
         Hourly rates apply to all recorded work hours.
       </p>
+
+      {errorMsg && (
+        <div className="mb-6 p-3 rounded-lg border border-red-700/50 bg-red-900/20 text-red-200 text-sm">
+          {errorMsg}
+        </div>
+      )}
 
       <div className="bg-slate-900 border border-slate-700 rounded-lg p-6">
         <table className="w-full">
@@ -127,7 +176,6 @@ export default function CommissionSettingsPage() {
               >
                 <td className="p-3 capitalize">{r.role.replace(/_/g, " ")}</td>
 
-                {/* COMMISSION INPUT */}
                 <td className="p-3">
                   <input
                     type="number"
@@ -136,6 +184,8 @@ export default function CommissionSettingsPage() {
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
                     }`}
                     value={r.rate}
+                    min={0}
+                    max={100}
                     onChange={(e) => {
                       const updated = rates.map((x) =>
                         x.role === r.role
@@ -147,7 +197,6 @@ export default function CommissionSettingsPage() {
                   />
                 </td>
 
-                {/* HOURLY INPUT */}
                 <td className="p-3">
                   <input
                     type="number"
@@ -156,6 +205,7 @@ export default function CommissionSettingsPage() {
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
                     }`}
                     value={r.hourly_rate}
+                    min={0}
                     onChange={(e) => {
                       const updated = rates.map((x) =>
                         x.role === r.role
