@@ -33,7 +33,7 @@ function normalizeStaffRow(row: any): StaffRecord {
     username: row.username,
 
     role_id: row.role_id,
-    role: row.roles?.name?.toLowerCase().trim() || "staff",
+    role: (row.roles?.name ?? "staff").toLowerCase().trim(),
 
     permissions_level: Number(row.roles?.permissions_level ?? 0),
     commission_rate: Number(row.roles?.commission_rate ?? 0),
@@ -41,29 +41,42 @@ function normalizeStaffRow(row: any): StaffRecord {
 }
 
 /* -------------------------------------------------------------
+ * Extract session_id from cookie header string
+ * ------------------------------------------------------------- */
+function sessionIdFromCookieHeader(header?: string) {
+  if (!header) return null;
+
+  return (
+    header
+      .split(";")
+      .map((c) => c.trim().split("="))
+      .find(([k]) => k === "session_id")?.[1] ?? null
+  );
+}
+
+/* -------------------------------------------------------------
  * getSession
  * ------------------------------------------------------------- */
 export async function getSession(): Promise<Session> {
   try {
-    // -----------------------------------------
-    // 1. Read cookies correctly in Next.js 15
-    // -----------------------------------------
+    // ---------------------------------------------------------
+    // 1. Read cookies via Next.js (async in your version)
+    // ---------------------------------------------------------
     const cookieStore = await cookies();
-    const cookieHeader =
-      globalThis.__session_cookie_header ??
-      cookieStore.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
+    const directSessionId = cookieStore.get("session_id")?.value ?? null;
 
-    // Parse session_id manually
-    const sessionId = cookieHeader
-      .split(";")
-      .map((c) => c.trim().split("="))
-      .find(([k]) => k === "session_id")?.[1];
+    // ---------------------------------------------------------
+    // 2. Fallback: injected cookie header (API routes)
+    // ---------------------------------------------------------
+    const sessionId =
+      directSessionId ??
+      sessionIdFromCookieHeader(globalThis.__session_cookie_header);
 
     if (!sessionId) return { staff: null };
 
-    // -----------------------------------------
-    // 2. Lookup session in Supabase
-    // -----------------------------------------
+    // ---------------------------------------------------------
+    // 3. Lookup session row
+    // ---------------------------------------------------------
     const supabase = supabaseServer();
 
     const { data: sessionRow, error: sessionErr } = await supabase
@@ -78,9 +91,9 @@ export async function getSession(): Promise<Session> {
       return { staff: null };
     }
 
-    // -----------------------------------------
-    // 3. Fetch staff + role
-    // -----------------------------------------
+    // ---------------------------------------------------------
+    // 4. Fetch staff + role
+    // ---------------------------------------------------------
     const { data: staffRow, error: staffErr } = await supabase
       .from("staff")
       .select(
