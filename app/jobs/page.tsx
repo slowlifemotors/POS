@@ -148,7 +148,7 @@ export default async function JobsPage() {
   if (customersErr) bannerWarnings.push("Failed to load customer names.");
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-transparent text-slate-100">
       <div className="max-w-6xl mx-auto px-6 py-10">
         <div className="flex items-end justify-between gap-4 mb-6">
           <div>
