@@ -29,6 +29,12 @@ function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Pricing display rule:
+ * - percentage value is COST (% of base price)
+ * - sale price = cost * 2 (100% markup)
+ * - flat value is already the SALE price
+ */
 function computePriceLabel(
   pricing_type: ModPricingType | null,
   pricing_value: number | null,
@@ -38,12 +44,13 @@ function computePriceLabel(
 
   if (pricing_type === "percentage") {
     const pct = Number(pricing_value);
-    const computed = roundToCents((vehicleBasePrice * pct) / 100);
-    return { text: `${pct.toFixed(2)}% ($${computed.toFixed(2)})`, computed };
+    const cost = roundToCents((vehicleBasePrice * pct) / 100);
+    const sale = roundToCents(cost * 2);
+    return { text: `${pct.toFixed(2)}% ($${sale.toFixed(2)})`, computed: sale };
   }
 
-  const computed = roundToCents(Number(pricing_value));
-  return { text: `$${computed.toLocaleString()}`, computed };
+  const sale = roundToCents(Number(pricing_value));
+  return { text: `$${sale.toLocaleString()}`, computed: sale };
 }
 
 export default function POSItems({
@@ -184,7 +191,7 @@ export default function POSItems({
             )}
 
             <p className="mt-3 text-xs text-slate-400">
-              * Mod prices are calculated from the selected vehicle base price (percentage) or fixed (flat).
+              * Percentage mods: % is COST basis; sale price includes 100% markup.
             </p>
           </div>
         )}

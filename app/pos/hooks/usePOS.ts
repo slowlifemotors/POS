@@ -33,14 +33,14 @@ export type ModNode = {
 export type CartItem = {
   id: string; // stable cart line id (vehicle_id:mod_id)
   name: string; // display name: "<Vehicle> — <Mod>"
-  price: number; // computed unit price
+  price: number; // computed unit SALE price
   quantity: number;
 
   // REQUIRED metadata
   vehicle_id: number;
   mod_id: string;
   mod_name: string;
-  computed_price: number; // same as price (explicitly stored)
+  computed_price: number; // computed unit SALE price (explicitly stored)
 
   pricing_type: ModPricingType;
   pricing_value: number;
@@ -100,12 +100,20 @@ function flattenMods(root: ModNode | null) {
   return map;
 }
 
+/**
+ * Pricing Rule:
+ * - percentage pricing_value is COST (% of vehicle base price)
+ * - markup is 100% => sale price = cost * 2
+ * - flat pricing_value is already the SALE price
+ */
 function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
   if (!mod.pricing_type || mod.pricing_value == null) return null;
 
   if (mod.pricing_type === "percentage") {
     const pct = Number(mod.pricing_value);
-    return roundToCents((vehicleBasePrice * pct) / 100);
+    const cost = roundToCents((vehicleBasePrice * pct) / 100);
+    const sale = roundToCents(cost * 2);
+    return sale;
   }
 
   return roundToCents(Number(mod.pricing_value));
@@ -118,8 +126,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [modsRoot, setModsRoot] = useState<ModNode | null>(null);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
-  // POS is card-only. Keep state for compatibility, but lock it to "card".
-  const [paymentMethod, setPaymentMethod] = useState<"card">("card");
+  const [paymentMethod, setPaymentMethod] = useState("cash");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -132,7 +139,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
-  // Used by checkout UI to prevent double-submits
+  // NEW: disable UI while "processing payment"
   const [isPaying, setIsPaying] = useState(false);
 
   // -------------------------
@@ -190,7 +197,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // LOAD TABS (kept for now; not used in card-only POS flow)
+  // LOAD TABS (kept for now; payment later)
   // -------------------------
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
@@ -267,8 +274,8 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    const computed = computeModPrice(mod, selectedVehicle.base_price);
-    if (computed == null) {
+    const computedSale = computeModPrice(mod, selectedVehicle.base_price);
+    if (computedSale == null) {
       alert(`"${mod.name}" has invalid pricing. Configure it in /mods.`);
       return;
     }
@@ -290,8 +297,8 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         {
           id: lineId,
           name: `${vName} — ${mod.name}`,
-          price: computed,
-          computed_price: computed,
+          price: computedSale,
+          computed_price: computedSale,
           quantity: 1,
 
           vehicle_id: selectedVehicle.id,
@@ -387,7 +394,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // CREATE ORDER (CARD-ONLY, INSTANT PAID)
+  // CREATE ORDER (checkout)
   // -------------------------
   const createOrder = async (note: string) => {
     if (isPaying) return;
@@ -407,9 +414,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    try {
-      setIsPaying(true);
+    setIsPaying(true);
 
+    try {
       const payload = {
         staff_id: staffId,
         vehicle_id: selectedVehicle.id,
@@ -429,7 +436,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
           mod_id: c.mod_id,
           mod_name: c.mod_name,
           quantity: c.quantity,
-          computed_price: c.computed_price,
+          computed_price: c.computed_price, // unit SALE price
           pricing_type: c.pricing_type,
           pricing_value: c.pricing_value,
         })),
@@ -444,7 +451,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        alert(json.error || "Failed to complete sale.");
+        alert(json.error || "Failed to create order.");
         return;
       }
 
@@ -455,7 +462,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       setDiscount(null);
       setSelectedVehicle(null);
 
-      alert(`Sale completed! (Card) Order ID: ${json.order_id}`);
+      alert(`Sale completed! Order ID: ${json.order_id}`);
     } finally {
       setIsPaying(false);
     }
@@ -489,17 +496,14 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     addModToCart,
     updateQty,
     removeItem,
-
-    // locked to "card", kept for compatibility
-    setPaymentMethod: (_: any) => setPaymentMethod("card"),
-
+    setPaymentMethod,
     setIsCheckoutOpen,
     setShowCustomerModal,
     setShowEditCustomerModal,
     handleSelectCustomer,
     refreshCustomer,
 
-    // checkout
+    // new
     createOrder,
     reloadModsTree: loadModsTree,
   };
