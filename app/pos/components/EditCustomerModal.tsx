@@ -113,7 +113,7 @@ export default function EditCustomerModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-40">
-      <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 w-[440px] text-slate-100">
+      <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 w-110 text-slate-100">
         <h2 className="text-2xl font-bold mb-4">Edit Customer</h2>
 
         {/* BASIC INFO */}

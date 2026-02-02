@@ -22,7 +22,7 @@ export default function POSCheckoutModal({
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 rounded-xl p-6 w-[420px] shadow-xl border border-slate-700 space-y-4">
+      <div className="bg-slate-900 rounded-xl p-6 w-105 shadow-xl border border-slate-700 space-y-4">
         <h2 className="text-2xl font-bold mb-2">Pay (Card)</h2>
 
         <p className="text-lg">
@@ -37,7 +37,7 @@ export default function POSCheckoutModal({
             Note (optional)
           </label>
           <textarea
-            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded min-h-[90px]"
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded min-h-22.5"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="e.g. Customer requested matte respray + turbo install..."

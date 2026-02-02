@@ -35,7 +35,7 @@ export default function POSClient({
       </div>
 
       {/* RIGHT SIDE – CART + CUSTOMER + CHECKOUT */}
-      <div className="w-[380px] bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
+      <div className="w-95 bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
         <button
           onClick={() => pos.setShowCustomerModal(true)}
           className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"

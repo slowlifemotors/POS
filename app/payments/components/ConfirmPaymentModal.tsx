@@ -89,7 +89,7 @@ export default function ConfirmPaymentModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-[420px] shadow-2xl text-slate-100">
+      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-105 shadow-2xl text-slate-100">
         <h2 className="text-2xl font-bold mb-4 text-fuchsia-400">
           Confirm Payment
         </h2>

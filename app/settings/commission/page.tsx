@@ -9,44 +9,77 @@ interface CommissionRate {
   hourly_rate: number;
 }
 
+type SessionStaff = {
+  id?: number;
+  username?: string;
+  name?: string;
+  role: string;
+  permissions_level: number;
+};
+
 export default function CommissionSettingsPage() {
-  const [session, setSession] = useState<null | {
-    role: string;
-    permissions_level: number;
-  }>(null);
+  const [session, setSession] = useState<SessionStaff | null>(null);
 
   const [rates, setRates] = useState<CommissionRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // ✅ Discount policy settings
+  // Discount policy settings
   const [staffDiscountAlwaysOn, setStaffDiscountAlwaysOn] = useState(false);
   const [minMonthlyHours, setMinMonthlyHours] = useState<number>(0);
   const [loadingPolicy, setLoadingPolicy] = useState(true);
+  const [policyError, setPolicyError] = useState<string | null>(null);
 
   const isManagerOrAbove =
     session?.permissions_level !== undefined &&
-    session.permissions_level >= 800;
+    Number(session.permissions_level) >= 800;
 
-  const isAdminOrOwner = session?.role === "admin" || session?.role === "owner";
+  const isAdminOrOwner = (() => {
+    const r = (session?.role ?? "").toLowerCase().trim();
+    return r === "admin" || r === "owner";
+  })();
+
   const canEdit = isAdminOrOwner;
 
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      try {
-        const sRes = await fetch("/api/auth/session", { cache: "no-store" });
-        const sJson = await sRes.json();
-        if (cancelled) return;
-        setSession(sJson.staff || null);
+    async function loadAll() {
+      setLoading(true);
+      setLoadError(null);
 
-        // discount policy
+      // Always resolve loading states (prevents infinite "Loading...")
+      try {
+        // 1) Session
+        const sRes = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        const sJson = await sRes.json().catch(() => ({}));
+
+        if (cancelled) return;
+
+        // Your /api/auth/session returns: { staff: ... }
+        setSession((sJson?.staff as SessionStaff) ?? null);
+
+        // 2) Discount policy (non-fatal)
+        setLoadingPolicy(true);
+        setPolicyError(null);
         try {
           const pRes = await fetch("/api/settings/discount-policy", {
             cache: "no-store",
+            credentials: "include",
           });
-          const pJson = await pRes.json();
+
+          // If endpoint missing or forbidden, don’t block the whole page
+          if (!pRes.ok) {
+            const t = await pRes.text().catch(() => "");
+            throw new Error(`Discount policy fetch failed (${pRes.status}) ${t}`);
+          }
+
+          const pJson = await pRes.json().catch(() => ({}));
           if (!cancelled) {
             setStaffDiscountAlwaysOn(Boolean(pJson?.staff_discount_always_on));
             setMinMonthlyHours(
@@ -55,45 +88,80 @@ export default function CommissionSettingsPage() {
                 : 0
             );
           }
-        } catch {
-          // non-fatal
+        } catch (e: any) {
+          if (!cancelled) {
+            setPolicyError(e?.message || "Failed to load discount policy.");
+          }
         } finally {
           if (!cancelled) setLoadingPolicy(false);
         }
 
-        // existing settings page data
-        const rRes = await fetch("/api/settings", { cache: "no-store" });
-        if (!rRes.ok) throw new Error("Settings fetch failed.");
+        // 3) Commission + hourly rates (non-fatal but should populate table)
+        const rRes = await fetch("/api/settings", {
+          cache: "no-store",
+          credentials: "include",
+        });
 
-        const data = await rRes.json();
+        if (!rRes.ok) {
+          const t = await rRes.text().catch(() => "");
+          throw new Error(`Settings fetch failed (${rRes.status}) ${t}`);
+        }
+
+        const data = await rRes.json().catch(() => ({}));
         if (cancelled) return;
 
-        const merged: CommissionRate[] = data.commission_rates.map((cr: any) => {
-          const hr = data.hourly_rates.find(
-            (h: any) => h.role.toLowerCase() === cr.role.toLowerCase()
+        const commissionRates = Array.isArray(data?.commission_rates)
+          ? data.commission_rates
+          : [];
+
+        const hourlyRates = Array.isArray(data?.hourly_rates) ? data.hourly_rates : [];
+
+        const merged: CommissionRate[] = commissionRates.map((cr: any) => {
+          const role = String(cr?.role ?? "");
+          const hr = hourlyRates.find(
+            (h: any) => String(h?.role ?? "").toLowerCase() === role.toLowerCase()
           );
+
           return {
-            role: cr.role,
-            rate: Number(cr.rate),
-            hourly_rate: hr ? Number(hr.hourly_rate) : 0,
+            role,
+            rate: Number(cr?.rate ?? 0),
+            hourly_rate: hr ? Number(hr?.hourly_rate ?? 0) : 0,
           };
         });
 
         setRates(merged);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Commission settings load failed:", err);
+        if (!cancelled) setLoadError(err?.message || "Failed to load settings.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    load();
+    loadAll();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (!loading && !isManagerOrAbove) {
+  if (loading) {
+    return (
+      <div className="min-h-screen pt-24 px-8 text-slate-300">
+        Loading...
+      </div>
+    );
+  }
+
+  // If session didn't load, show a clear message instead of looping
+  if (!session) {
+    return (
+      <div className="min-h-screen pt-24 px-8 text-red-400">
+        Not authenticated. Please log in again.
+      </div>
+    );
+  }
+
+  if (!isManagerOrAbove) {
     return (
       <div className="min-h-screen pt-24 px-8 text-red-400 text-xl">
         You do not have permission to view this page.
@@ -107,25 +175,27 @@ export default function CommissionSettingsPage() {
     setSaving(true);
 
     try {
-      // save discount policy
+      // Save discount policy (best effort)
       await fetch("/api/settings/discount-policy", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           staff_discount_always_on: staffDiscountAlwaysOn,
-          staff_discount_min_monthly_hours: minMonthlyHours,
+          staff_discount_min_monthly_hours: Math.max(0, Number(minMonthlyHours) || 0),
         }),
       });
 
-      // existing per-role saves
+      // Save per-role commission + hourly rates
       for (const entry of rates) {
         await fetch("/api/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({
             role: entry.role,
-            rate: entry.rate,
-            hourly_rate: entry.hourly_rate,
+            rate: Number(entry.rate) || 0,
+            hourly_rate: Number(entry.hourly_rate) || 0,
           }),
         });
       }
@@ -136,26 +206,23 @@ export default function CommissionSettingsPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen pt-24 px-8 text-slate-300">
-        Loading...
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen pt-24 px-8 text-slate-100">
-      <h1 className="text-3xl font-bold mb-4 text-white">
-        Commission Settings
-      </h1>
+      <h1 className="text-3xl font-bold mb-2 text-white">Commission Settings</h1>
 
       <p className="text-slate-400 mb-6">
-        Commission is calculated on <strong>profit</strong>.<br />
+        Commission is calculated on <strong>profit</strong>.
+        <br />
         Hourly rates apply to all recorded work hours.
       </p>
 
-      {/* ✅ Discount Policy */}
+      {loadError && (
+        <div className="mb-6 p-3 rounded-lg border border-red-700/50 bg-red-900/20 text-red-200 text-sm">
+          {loadError}
+        </div>
+      )}
+
+      {/* Discount Policy */}
       <div className="bg-slate-900 border border-slate-700 rounded-lg p-6 mb-6">
         <h2 className="text-xl font-bold text-white mb-2">Discount Policy</h2>
         <p className="text-slate-400 text-sm mb-4">
@@ -165,6 +232,10 @@ export default function CommissionSettingsPage() {
 
         {loadingPolicy ? (
           <p className="text-slate-400">Loading discount policy...</p>
+        ) : policyError ? (
+          <p className="text-amber-300 text-sm">
+            {policyError}
+          </p>
         ) : (
           <div className="space-y-4">
             <label className="flex items-center gap-3">
@@ -173,7 +244,7 @@ export default function CommissionSettingsPage() {
                 disabled={!canEdit}
                 checked={staffDiscountAlwaysOn}
                 onChange={(e) => setStaffDiscountAlwaysOn(e.target.checked)}
-                className="h-5 w-5 accent-[color:var(--accent)]"
+                className="h-5 w-5 accent-(--accent)"
               />
               <span className={`text-slate-200 ${!canEdit ? "opacity-50" : ""}`}>
                 Always apply staff discount (ignore hours requirement)
@@ -182,9 +253,7 @@ export default function CommissionSettingsPage() {
 
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-slate-200 font-semibold">
-                  Minimum Monthly Hours
-                </p>
+                <p className="text-slate-200 font-semibold">Minimum Monthly Hours</p>
                 <p className="text-slate-500 text-sm">
                   Used only when “Always apply” is OFF.
                 </p>
@@ -214,7 +283,7 @@ export default function CommissionSettingsPage() {
         )}
       </div>
 
-      {/* Existing commission/hourly table */}
+      {/* Commission/Hourly table */}
       <div className="bg-slate-900 border border-slate-700 rounded-lg p-6">
         <table className="w-full">
           <thead className="bg-slate-800 border-b border-slate-700 text-slate-300">
@@ -236,6 +305,8 @@ export default function CommissionSettingsPage() {
                 <td className="p-3">
                   <input
                     type="number"
+                    min={0}
+                    max={100}
                     disabled={!canEdit}
                     className={`bg-slate-800 px-3 py-2 rounded border border-slate-700 w-24 outline-none ${
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
@@ -255,6 +326,7 @@ export default function CommissionSettingsPage() {
                 <td className="p-3">
                   <input
                     type="number"
+                    min={0}
                     disabled={!canEdit}
                     className={`bg-slate-800 px-3 py-2 rounded border border-slate-700 w-28 outline-none ${
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
@@ -281,8 +353,8 @@ export default function CommissionSettingsPage() {
             disabled={saving}
             className="
               mt-6 px-6 py-3 rounded font-semibold
-              bg-[color:var(--accent)]
-              hover:bg-[color:var(--accent-hover)]
+              bg-(--accent)
+              hover:bg-(--accent-hover)
               disabled:opacity-50
             "
           >

@@ -697,7 +697,7 @@ export default function ModsPage() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-1000">
-          <div className="bg-slate-900 p-6 rounded-xl w-[560px] border border-slate-700 shadow-2xl">
+          <div className="bg-slate-900 p-6 rounded-xl w-140 border border-slate-700 shadow-2xl">
             <h2 className="text-2xl font-bold mb-4">{editing ? "Edit Mod / Menu" : "Add Mod / Menu"}</h2>
 
             <div className="space-y-4">
@@ -728,7 +728,7 @@ export default function ModsPage() {
                   </p>
                 </div>
 
-                <div className="w-[140px]">
+                <div className="w-35">
                   <label className="block text-xs text-slate-400 mb-1">Display Order</label>
                   <input
                     type="number"
@@ -781,7 +781,7 @@ export default function ModsPage() {
                       </select>
                     </div>
 
-                    <div className="w-[220px]">
+                    <div className="w-55">
                       <label className="block text-xs text-slate-400 mb-1">Pricing Value</label>
                       <input
                         type="number"

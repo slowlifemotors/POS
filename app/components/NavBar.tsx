@@ -113,7 +113,7 @@ export default function NavBar({
   return (
     <nav className="fixed top-0 left-0 w-full bg-slate-900 border-b border-slate-800 shadow-md z-1000 isolate">
       <div className="flex items-center justify-between px-6 py-3">
-        <div className="flex items-center gap-3 min-w-[260px]">
+        <div className="flex items-center gap-3 min-w-65">
           <div
             style={{ width: logoWidth, height: logoHeight }}
             className="flex items-center justify-center overflow-hidden rounded-md"
@@ -188,7 +188,7 @@ export default function NavBar({
           })}
         </div>
 
-        <div className="flex items-center gap-4 text-sm min-w-[220px] justify-end">
+        <div className="flex items-center gap-4 text-sm min-w-55 justify-end">
           <div className="text-right leading-tight">
             <p className="text-slate-400">Name</p>
             <p className="font-semibold capitalize">{username}</p>

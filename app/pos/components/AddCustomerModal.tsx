@@ -156,7 +156,7 @@ const selectCustomer = async (customer: Customer) => {
   // ---------------------------------------------
   return (
     <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
-      <div className="bg-slate-900 w-[420px] p-6 rounded-xl border border-slate-700 shadow-xl text-slate-100">
+      <div className="bg-slate-900 w-105 p-6 rounded-xl border border-slate-700 shadow-xl text-slate-100">
         <h2 className="text-2xl font-bold mb-4">Add / Select Customer</h2>
 
         {/* SEARCH INPUT */}
