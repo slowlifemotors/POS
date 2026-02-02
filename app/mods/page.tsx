@@ -147,8 +147,28 @@ export default function ModsPage() {
   // ----------------------------
   const loadMods = async () => {
     setLoading(true);
-    const res = await fetch("/api/admin/mods", { cache: "no-store" });
+
+    const res = await fetch("/api/admin/mods", {
+      cache: "no-store",
+      credentials: "include",
+    });
+
     const json = await res.json().catch(() => ({}));
+
+    if (res.status === 401) {
+      // Session cookie not sent / expired
+      setMods([]);
+      setLoading(false);
+      router.push("/login");
+      return;
+    }
+
+    if (res.status === 403) {
+      setForbidden(true);
+      setMods([]);
+      setLoading(false);
+      return;
+    }
 
     if (!res.ok) {
       console.error("Failed to load mods:", json);
@@ -225,15 +245,12 @@ export default function ModsPage() {
   // Root is always shown.
   // ----------------------------
   const visibleRows = useMemo(() => {
-    // Build parent map for quick ancestor checks
     const parentById = new Map<string, string | null>();
     const isMenuById = new Map<string, boolean>();
-    const nameById = new Map<string, string>();
 
     for (const m of mods) {
       parentById.set(m.id, m.parent_id ?? null);
       isMenuById.set(m.id, Boolean(m.is_menu));
-      nameById.set(m.id, m.name);
     }
 
     const isHiddenByClosedAncestor = (id: string) => {
@@ -242,8 +259,7 @@ export default function ModsPage() {
         const isMenu = isMenuById.get(cur) ?? false;
         if (isMenu) {
           const open = openMap[cur];
-          // default to open if undefined
-          if (open === false) return true;
+          if (open === false) return true; // default open unless explicitly false
         }
         cur = parentById.get(cur) ?? null;
       }
@@ -251,7 +267,6 @@ export default function ModsPage() {
     };
 
     return filteredFlatRows.filter(({ node }) => {
-      // Always show Root row if present
       if (node.name === "Root" && node.parent_id === null) return true;
       return !isHiddenByClosedAncestor(node.id);
     });
@@ -264,7 +279,7 @@ export default function ModsPage() {
     setEditing(null);
 
     setName("");
-    setParentId(parent?.id ?? tree.root?.id ?? null);
+    setParentId(parent?.id ?? (tree.root ? (tree.root as any as ModRow).id : null));
 
     setDisplayOrder("0");
     setIsMenu(false);
@@ -305,7 +320,7 @@ export default function ModsPage() {
 
     const payload: any = {
       name: nm,
-      parent_id: parentId, // may be null
+      parent_id: parentId,
       display_order: Number(orderNum),
       is_menu: Boolean(isMenu),
       active: Boolean(active),
@@ -334,10 +349,17 @@ export default function ModsPage() {
     const res = await fetch("/api/admin/mods", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(payload),
     });
 
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return router.push("/login");
+    if (res.status === 403) {
+      setForbidden(true);
+      return;
+    }
+
     if (!res.ok) {
       console.error("Create mod error:", json);
       alert(json.error || "Failed to create.");
@@ -388,10 +410,17 @@ export default function ModsPage() {
     const res = await fetch(`/api/admin/mods/${editing.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(payload),
     });
 
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return router.push("/login");
+    if (res.status === 403) {
+      setForbidden(true);
+      return;
+    }
+
     if (!res.ok) {
       console.error("Update mod error:", json);
       alert(json.error || "Failed to update.");
@@ -405,8 +434,17 @@ export default function ModsPage() {
   const deleteRow = async (row: ModRow) => {
     if (!confirm(`Delete "${row.name}"? This will also delete all children.`)) return;
 
-    const res = await fetch(`/api/admin/mods/${row.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/admin/mods/${row.id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401) return router.push("/login");
+    if (res.status === 403) {
+      setForbidden(true);
+      return;
+    }
 
     if (!res.ok) {
       console.error("Delete mod error:", json);
@@ -419,7 +457,6 @@ export default function ModsPage() {
 
   // ----------------------------
   // Reorder helpers (up/down within same parent)
-  // Calls /api/admin/mods/reorder with normalized 0..n orders
   // ----------------------------
   const reorderWithinParent = async (parent_id: string | null, newSiblingOrder: string[]) => {
     const items = newSiblingOrder.map((id, idx) => ({ id, display_order: idx }));
@@ -427,10 +464,20 @@ export default function ModsPage() {
     const res = await fetch("/api/admin/mods/reorder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ parent_id, items }),
     });
 
     const json = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      router.push("/login");
+      return false;
+    }
+    if (res.status === 403) {
+      setForbidden(true);
+      return false;
+    }
+
     if (!res.ok) {
       console.error("Reorder error:", json);
       alert(json.error || "Failed to reorder.");
@@ -473,9 +520,7 @@ export default function ModsPage() {
     return (
       <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8">
         <h2 className="text-3xl font-bold mb-2">Mods</h2>
-        <p className="text-slate-300">
-          You don’t have access to this page. (Admin/Owner only)
-        </p>
+        <p className="text-slate-300">You don’t have access to this page. (Admin/Owner only)</p>
       </div>
     );
   }
@@ -537,113 +582,106 @@ export default function ModsPage() {
               </tr>
             )}
 
-            {!loading && visibleRows.map(({ node, depth }) => {
-              const indent = Math.min(depth, 10);
-              const paddingLeft = 12 + indent * 16;
+            {!loading &&
+              visibleRows.map(({ node, depth }) => {
+                const indent = Math.min(depth, 10);
+                const paddingLeft = 12 + indent * 16;
 
-              const isRoot = node.name === "Root" && node.parent_id === null;
+                const isRoot = node.name === "Root" && node.parent_id === null;
 
-              const isOpen = openMap[node.id] !== false; // default open
-              const canCollapse = node.is_menu && node.children.length > 0;
+                const isOpen = openMap[node.id] !== false; // default open
+                const canCollapse = node.is_menu && node.children.length > 0;
 
-              return (
-                <tr key={node.id} className="border-b border-slate-800 hover:bg-slate-800">
-                  <td className="p-3" style={{ paddingLeft }}>
-                    <div className="flex items-center gap-2">
-                      {canCollapse ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setOpenMap((prev) => ({ ...prev, [node.id]: !(prev[node.id] !== false) }))
-                          }
-                          className="text-slate-300 hover:text-white"
-                          title={isOpen ? "Collapse" : "Expand"}
-                        >
-                          {isOpen ? "▾" : "▸"}
-                        </button>
-                      ) : (
-                        <span className="text-slate-700">•</span>
+                return (
+                  <tr key={node.id} className="border-b border-slate-800 hover:bg-slate-800">
+                    <td className="p-3" style={{ paddingLeft }}>
+                      <div className="flex items-center gap-2">
+                        {canCollapse ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenMap((prev) => ({ ...prev, [node.id]: !(prev[node.id] !== false) }))
+                            }
+                            className="text-slate-300 hover:text-white"
+                            title={isOpen ? "Collapse" : "Expand"}
+                          >
+                            {isOpen ? "▾" : "▸"}
+                          </button>
+                        ) : (
+                          <span className="text-slate-700">•</span>
+                        )}
+
+                        <span className={node.is_menu ? "font-semibold text-slate-50" : "text-slate-100"}>
+                          {node.name}
+                        </span>
+
+                        {node.is_menu && (
+                          <span className="text-xs text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded">
+                            Menu
+                          </span>
+                        )}
+
+                        {!node.active && (
+                          <span className="text-xs text-red-300 bg-red-950/40 border border-red-900 px-2 py-0.5 rounded">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="p-3">{node.is_menu ? "Menu" : "Mod"}</td>
+                    <td className="p-3">{formatPricing(node)}</td>
+                    <td className="p-3">{node.display_order}</td>
+                    <td className="p-3">{node.active ? "Yes" : "No"}</td>
+
+                    <td className="p-3 text-right whitespace-nowrap">
+                      {!isRoot && (
+                        <>
+                          <button
+                            onClick={() => moveSibling(node, "up")}
+                            className="text-slate-300 hover:text-white mr-3"
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            onClick={() => moveSibling(node, "down")}
+                            className="text-slate-300 hover:text-white mr-4"
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                        </>
                       )}
-
-                      <span className={node.is_menu ? "font-semibold text-slate-50" : "text-slate-100"}>
-                        {node.name}
-                      </span>
 
                       {node.is_menu && (
-                        <span className="text-xs text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded">
-                          Menu
-                        </span>
+                        <button
+                          onClick={() => openCreateModal(node)}
+                          className="text-emerald-400 hover:text-emerald-300 mr-4"
+                          title="Add child under this menu"
+                        >
+                          + Child
+                        </button>
                       )}
 
-                      {!node.active && (
-                        <span className="text-xs text-red-300 bg-red-950/40 border border-red-900 px-2 py-0.5 rounded">
-                          Inactive
-                        </span>
+                      <button
+                        onClick={() => openEditModal(node)}
+                        className="text-amber-400 hover:text-amber-300 mr-4"
+                      >
+                        Edit
+                      </button>
+
+                      {!isRoot && (
+                        <button onClick={() => deleteRow(node)} className="text-red-400 hover:text-red-300">
+                          Delete
+                        </button>
                       )}
-                    </div>
-                  </td>
 
-                  <td className="p-3">{node.is_menu ? "Menu" : "Mod"}</td>
-
-                  <td className="p-3">{formatPricing(node)}</td>
-
-                  <td className="p-3">{node.display_order}</td>
-
-                  <td className="p-3">{node.active ? "Yes" : "No"}</td>
-
-                  <td className="p-3 text-right whitespace-nowrap">
-                    {!isRoot && (
-                      <>
-                        <button
-                          onClick={() => moveSibling(node, "up")}
-                          className="text-slate-300 hover:text-white mr-3"
-                          title="Move up"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          onClick={() => moveSibling(node, "down")}
-                          className="text-slate-300 hover:text-white mr-4"
-                          title="Move down"
-                        >
-                          ↓
-                        </button>
-                      </>
-                    )}
-
-                    {node.is_menu && (
-                      <button
-                        onClick={() => openCreateModal(node)}
-                        className="text-emerald-400 hover:text-emerald-300 mr-4"
-                        title="Add child under this menu"
-                      >
-                        + Child
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => openEditModal(node)}
-                      className="text-amber-400 hover:text-amber-300 mr-4"
-                    >
-                      Edit
-                    </button>
-
-                    {!isRoot && (
-                      <button
-                        onClick={() => deleteRow(node)}
-                        className="text-red-400 hover:text-red-300"
-                      >
-                        Delete
-                      </button>
-                    )}
-
-                    {isRoot && (
-                      <span className="text-slate-500 text-xs">Root cannot be deleted</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                      {isRoot && <span className="text-slate-500 text-xs">Root cannot be deleted</span>}
+                    </td>
+                  </tr>
+                );
+              })}
 
             {!loading && visibleRows.length === 0 && (
               <tr>
@@ -660,9 +698,7 @@ export default function ModsPage() {
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-1000">
           <div className="bg-slate-900 p-6 rounded-xl w-[560px] border border-slate-700 shadow-2xl">
-            <h2 className="text-2xl font-bold mb-4">
-              {editing ? "Edit Mod / Menu" : "Add Mod / Menu"}
-            </h2>
+            <h2 className="text-2xl font-bold mb-4">{editing ? "Edit Mod / Menu" : "Add Mod / Menu"}</h2>
 
             <div className="space-y-4">
               <input
@@ -722,11 +758,7 @@ export default function ModsPage() {
                 </label>
 
                 <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={active}
-                    onChange={(e) => setActive(e.target.checked)}
-                  />
+                  <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
                   Active
                 </label>
               </div>
@@ -775,17 +807,11 @@ export default function ModsPage() {
             </div>
 
             <div className="mt-6 flex justify-between">
-              <button
-                onClick={closeModal}
-                className="px-4 py-2 bg-slate-700 rounded"
-              >
+              <button onClick={closeModal} className="px-4 py-2 bg-slate-700 rounded">
                 Cancel
               </button>
 
-              <button
-                onClick={editing ? update : save}
-                className="px-4 py-2 bg-emerald-600 rounded font-semibold"
-              >
+              <button onClick={editing ? update : save} className="px-4 py-2 bg-emerald-600 rounded font-semibold">
                 Save
               </button>
             </div>

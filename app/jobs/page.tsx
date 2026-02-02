@@ -154,7 +154,7 @@ export default async function JobsPage() {
           <div>
             <h1 className="text-3xl font-bold">Jobs</h1>
             <p className="text-slate-400 text-sm">
-              Paid order history (read-only). Manager+ only.
+              Completed job history.
             </p>
           </div>
 
@@ -271,7 +271,7 @@ export default async function JobsPage() {
         </div>
 
         <p className="text-xs text-slate-500 mt-6">
-          Jobs are read-only audit history. Checkout happens in POS and writes paid orders immediately.
+          Will eventually change this so jobs can be edited by Manager+
         </p>
       </div>
     </div>
