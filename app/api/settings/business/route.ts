@@ -5,6 +5,16 @@ import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
+function injectCookieHeader(req: Request) {
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  (globalThis as any).__session_cookie_header = cookieHeader;
+}
+
+function canManageBusinessSettings(role: unknown) {
+  const r = typeof role === "string" ? role.toLowerCase().trim() : "";
+  return r === "admin" || r === "owner" || r === "manager";
+}
+
 function getSupabaseAdmin() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY");
@@ -13,17 +23,6 @@ function getSupabaseAdmin() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
   });
-}
-
-function canManageBusinessSettings(role: unknown) {
-  const r = typeof role === "string" ? role.toLowerCase().trim() : "";
-  return r === "admin" || r === "owner" || r === "manager";
-}
-
-function injectCookieHeader(req: Request) {
-  // Keep consistent with the rest of your API routes that call getSession()
-  const cookieHeader = req.headers.get("cookie") ?? "";
-  (globalThis as any).__session_cookie_header = cookieHeader;
 }
 
 async function ensureBusinessRowExists() {
@@ -45,20 +44,16 @@ async function ensureBusinessRowExists() {
     .single();
 
   if (insertError) throw insertError;
-
   return inserted;
 }
 
 export async function GET(req: Request) {
   try {
-    // Not strictly required for GET (no session check),
-    // but consistent + helps if you later add auth here.
     injectCookieHeader(req);
-
     const data = await ensureBusinessRowExists();
     return NextResponse.json({ settings: data });
-  } catch (error: any) {
-    console.error("GET business settings error:", error);
+  } catch (err) {
+    console.error("GET business settings error:", err);
     return NextResponse.json({ error: "Failed to load business settings" }, { status: 500 });
   }
 }
@@ -72,64 +67,53 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
 
-    // ✅ Match UI permission rule: Admin/Owner/Manager
     if (!canManageBusinessSettings(session.staff.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));
+    const update: Record<string, any> = {};
 
-    const {
-      business_name,
-      business_logo_url,
-      theme_color,
-      logo_width,
-      logo_height,
+    // ---- safe partial updates only ----
 
-      background_image_url,
-      background_opacity,
-      background_darken_enabled,
-      background_darken_strength,
-    } = body ?? {};
+    if ("business_name" in body) update.business_name = body.business_name;
+    if ("business_logo_url" in body) update.business_logo_url = body.business_logo_url;
+    if ("theme_color" in body) update.theme_color = body.theme_color;
+
+    if ("logo_width" in body) update.logo_width = Number(body.logo_width);
+    if ("logo_height" in body) update.logo_height = Number(body.logo_height);
+
+    if ("background_image_url" in body)
+      update.background_image_url = body.background_image_url;
+
+    if ("background_opacity" in body)
+      update.background_opacity = Math.min(Math.max(Number(body.background_opacity), 0), 1);
+
+    if ("background_darken_enabled" in body)
+      update.background_darken_enabled = Boolean(body.background_darken_enabled);
+
+    if ("background_darken_strength" in body)
+      update.background_darken_strength = Math.min(
+        Math.max(Number(body.background_darken_strength), 0),
+        1
+      );
+
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
 
     const supabase = getSupabaseAdmin();
     await ensureBusinessRowExists();
 
     const { data, error } = await supabase
       .from("business_settings")
-      .update({
-        business_name: business_name ?? null,
-        business_logo_url: business_logo_url ?? null,
-        theme_color: theme_color ?? null,
-        logo_width: logo_width ?? null,
-        logo_height: logo_height ?? null,
-
-        background_image_url: background_image_url ?? null,
-        background_opacity:
-          typeof background_opacity === "number"
-            ? background_opacity
-            : background_opacity
-            ? Number(background_opacity)
-            : null,
-
-        background_darken_enabled:
-          typeof background_darken_enabled === "boolean"
-            ? background_darken_enabled
-            : null,
-
-        background_darken_strength:
-          typeof background_darken_strength === "number"
-            ? background_darken_strength
-            : background_darken_strength
-            ? Number(background_darken_strength)
-            : null,
-      })
+      .update(update)
       .eq("id", 1)
       .select()
       .single();
 
     if (error) {
-      console.error("PUT business settings error:", error);
+      console.error("PUT business settings error:", error, update);
       return NextResponse.json(
         { error: "Failed to update business settings" },
         { status: 500 }
@@ -137,8 +121,8 @@ export async function PUT(req: Request) {
     }
 
     return NextResponse.json({ settings: data });
-  } catch (error: any) {
-    console.error("PUT business settings unexpected error:", error);
+  } catch (err) {
+    console.error("PUT business settings fatal:", err);
     return NextResponse.json({ error: "Failed to update business settings" }, { status: 500 });
   }
 }
