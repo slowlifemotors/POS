@@ -19,7 +19,7 @@ async function getPayPeriod(staff_id: number) {
     .eq("staff_id", staff_id)
     .order("period_end", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   const now = new Date();
 
@@ -46,93 +46,48 @@ async function getHours(staff_id: number, start: Date, end: Date) {
 
 /* ---------------------------------------------------------
    COMMISSION
-   USING COGS PROFIT WITH PROPORTIONAL DISCOUNT ALLOCATION
+   GAME RULE:
+   - Checkout price is doubled (profit is exactly half of what customer pays)
+   - Discounts apply to whole sale -> profit is half of FINAL TOTAL
+   => profit = order.total / 2
 --------------------------------------------------------- */
 async function getCommission(
   staff_id: number,
-  role_name: string,
+  commission_rate: number,
   start: Date,
   end: Date
 ) {
-  // Load commission rate
-  const { data: rateRow } = await supabase
-    .from("commission_rates")
-    .select("rate")
-    .eq("role", role_name.toLowerCase())
-    .single();
-
-  const rate = Number(rateRow?.rate ?? 0);
-
-  // Load all sales in period
-  const { data: sales } = await supabase
-    .from("sales")
-    .select("id, final_total, original_total, refunded")
+  // Load all PAID orders for staff in period
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, total, status")
     .eq("staff_id", staff_id)
+    .eq("status", "paid")
     .gte("created_at", start.toISOString())
     .lte("created_at", end.toISOString());
 
-  if (!sales || sales.length === 0) {
-    return { rate, profit: 0, value: 0 };
+  if (error) {
+    console.error("getCommission orders error:", error);
+    return { rate: commission_rate, profit: 0, value: 0 };
   }
 
+  if (!orders || orders.length === 0) {
+    return { rate: commission_rate, profit: 0, value: 0 };
+  }
+
+  // Profit is half of what customer paid (after discount)
   let totalProfit = 0;
 
-  for (const sale of sales) {
-    if (sale.refunded) continue;
-
-    const saleId = sale.id;
-    const originalTotal = Number(sale.original_total || 0);
-    const finalTotal = Number(sale.final_total || 0);
-    const discountLoss = Math.max(0, originalTotal - finalTotal);
-
-    // Load sale items for this sale
-    const { data: items } = await supabase
-      .from("sale_items")
-      .select("item_id, quantity, price_each, subtotal")
-      .eq("sale_id", saleId);
-
-    if (!items || items.length === 0) continue;
-
-    const sumSubtotals = items.reduce(
-      (s, i) => s + Number(i.subtotal || 0),
-      0
-    );
-
-    if (sumSubtotals <= 0) continue;
-
-    // Load cost_price for each item
-    const itemIds = items.map((i) => i.item_id);
-    const { data: products } = await supabase
-      .from("items")
-      .select("id, cost_price")
-      .in("id", itemIds);
-
-    const costMap: Record<number, number> = {};
-    products?.forEach((p) => {
-      costMap[p.id] = Number(p.cost_price || 0);
-    });
-
-    // Calculate per-item COGS profit with proportional discount deduction
-    for (const item of items) {
-      const qty = Number(item.quantity || 0);
-      const priceEach = Number(item.price_each || 0);
-      const subtotal = Number(item.subtotal || 0);
-      const cost = costMap[item.item_id] ?? 0;
-
-      const itemBaseProfit = (priceEach - cost) * qty;
-
-      const itemDiscountShare = (subtotal / sumSubtotals) * discountLoss;
-
-      const itemTrueProfit = Math.max(0, itemBaseProfit - itemDiscountShare);
-
-      totalProfit += itemTrueProfit;
-    }
+  for (const o of orders) {
+    const total = Number(o.total || 0);
+    if (total <= 0) continue;
+    totalProfit += total / 2;
   }
 
-  const commissionValue = totalProfit * (rate / 100);
+  const commissionValue = totalProfit * (Number(commission_rate || 0) / 100);
 
   return {
-    rate,
+    rate: Number(commission_rate || 0),
     profit: totalProfit,
     value: commissionValue,
   };
@@ -148,7 +103,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const requesterRole = session.staff.role.toLowerCase();
+  const requesterRole = String(session.staff.role || "").toLowerCase();
   if (!["admin", "owner", "manager"].includes(requesterRole)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -160,7 +115,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing staff_id" }, { status: 400 });
   }
 
-  // Load staff role
+  // Load staff role + hourly_rate + commission_rate from roles
   const { data: staffRow } = await supabase
     .from("staff")
     .select("role_id")
@@ -171,14 +126,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Staff not found" }, { status: 404 });
   }
 
-  const { data: rolesRow } = await supabase
+  const { data: roleRow } = await supabase
     .from("roles")
-    .select("name, hourly_rate")
+    .select("name, hourly_rate, commission_rate")
     .eq("id", staffRow.role_id)
     .single();
 
-  const role_name = rolesRow?.name?.toLowerCase() ?? "staff";
-  const hourly_rate = Number(rolesRow?.hourly_rate ?? 0);
+  const hourly_rate = Number(roleRow?.hourly_rate ?? 0);
+  const commission_rate = Number(roleRow?.commission_rate ?? 0);
 
   // Pay period
   const { period_start, period_end } = await getPayPeriod(staff_id);
@@ -187,10 +142,10 @@ export async function GET(req: Request) {
   const hours = await getHours(staff_id, period_start, period_end);
   const hourly_pay = hours * hourly_rate;
 
-  // Commission (COGS-based)
+  // Commission (profit-based per game rules)
   const commission = await getCommission(
     staff_id,
-    role_name,
+    commission_rate,
     period_start,
     period_end
   );

@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const requesterRole = session.staff.role.toLowerCase();
+    const requesterRole = String(session.staff.role || "").toLowerCase();
 
     // Only admin, owner, manager can pay someone
     if (!["admin", "owner", "manager"].includes(requesterRole)) {
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
       commission_value,
 
       // Total
-      total_pay
+      total_pay,
     } = body;
 
     // Validate required fields
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
       commission_rate,
       commission_profit,
       commission_value,
-      total_pay
+      total_pay,
     ];
 
     if (required.some((v) => v === undefined || v === null)) {
@@ -76,8 +76,14 @@ export async function POST(req: Request) {
       period_end,
       hours_worked: hours,
       hourly_pay: hourly_pay,
+
+      // NEW: persist the profit/rate used
+      commission_rate: commission_rate,
+      commission_profit: commission_profit,
+
+      // existing
       commission: commission_value,
-      total_paid: total_pay
+      total_paid: total_pay,
     };
 
     // Insert into payments table
@@ -94,14 +100,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      payment: data
+      payment: data,
     });
-
   } catch (err) {
     console.error("Payment confirm fatal error:", err);
-    return NextResponse.json(
-      { error: "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

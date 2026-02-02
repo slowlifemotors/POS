@@ -17,7 +17,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const role = session.staff.role.toLowerCase();
+    const role = String(session.staff.role || "").toLowerCase();
     const isPrivileged = ["admin", "owner", "manager"].includes(role);
 
     // Parse query params
@@ -25,10 +25,7 @@ export async function GET(req: Request) {
     const staffId = Number(searchParams.get("staff_id"));
 
     if (!staffId) {
-      return NextResponse.json(
-        { error: "Missing staff_id" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing staff_id" }, { status: 400 });
     }
 
     // Non-admin cannot view other people's history
@@ -56,8 +53,8 @@ export async function GET(req: Request) {
     const staffIds = [
       ...new Set([
         ...payments.map((p) => p.staff_id),
-        ...payments.map((p) => p.paid_by)
-      ])
+        ...payments.map((p) => p.paid_by),
+      ]),
     ];
 
     // Load staff names
@@ -87,19 +84,20 @@ export async function GET(req: Request) {
 
       hours_worked: Number(p.hours_worked),
       hourly_pay: Number(p.hourly_pay),
+
+      // NEW fields (safe even if old rows have defaults)
+      commission_rate: Number(p.commission_rate ?? 0),
+      commission_profit: Number(p.commission_profit ?? 0),
+
       commission: Number(p.commission),
       total_paid: Number(p.total_paid),
 
-      created_at: p.created_at
+      created_at: p.created_at,
     }));
 
     return NextResponse.json({ history: enriched });
-
   } catch (err) {
     console.error("Payment history fatal error:", err);
-    return NextResponse.json(
-      { error: "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

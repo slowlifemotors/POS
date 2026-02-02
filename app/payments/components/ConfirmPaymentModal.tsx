@@ -1,4 +1,4 @@
-//  app/payments/components/ConfirmPaymentModal.tsx
+// app/payments/components/ConfirmPaymentModal.tsx
 "use client";
 
 import React, { useState } from "react";
@@ -37,7 +37,6 @@ export default function ConfirmPaymentModal({
 }) {
   const [loading, setLoading] = useState(false);
 
-  // Early exit
   if (!open || !summary) return null;
 
   const s = summary;
@@ -136,7 +135,7 @@ export default function ConfirmPaymentModal({
             <p>Rate:</p>
             <p className="text-right">{s.commission.rate}%</p>
 
-            <p>Profit:</p>
+            <p>Profit After Discount:</p>
             <p className="text-right">
               ${s.commission.profit.toLocaleString()}
             </p>
