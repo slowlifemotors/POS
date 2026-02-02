@@ -16,8 +16,14 @@ function getSupabaseAdmin() {
 }
 
 function canManageBusinessSettings(role: unknown) {
-  const r = typeof role === "string" ? role.toLowerCase() : "";
+  const r = typeof role === "string" ? role.toLowerCase().trim() : "";
   return r === "admin" || r === "owner" || r === "manager";
+}
+
+function injectCookieHeader(req: Request) {
+  // Keep consistent with the rest of your API routes that call getSession()
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  (globalThis as any).__session_cookie_header = cookieHeader;
 }
 
 async function ensureBusinessRowExists() {
@@ -43,8 +49,12 @@ async function ensureBusinessRowExists() {
   return inserted;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    // Not strictly required for GET (no session check),
+    // but consistent + helps if you later add auth here.
+    injectCookieHeader(req);
+
     const data = await ensureBusinessRowExists();
     return NextResponse.json({ settings: data });
   } catch (error: any) {
@@ -55,6 +65,8 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
+    injectCookieHeader(req);
+
     const session = await getSession();
     if (!session?.staff) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -65,7 +77,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const {
       business_name,
@@ -78,7 +90,7 @@ export async function PUT(req: Request) {
       background_opacity,
       background_darken_enabled,
       background_darken_strength,
-    } = body;
+    } = body ?? {};
 
     const supabase = getSupabaseAdmin();
     await ensureBusinessRowExists();
@@ -118,7 +130,10 @@ export async function PUT(req: Request) {
 
     if (error) {
       console.error("PUT business settings error:", error);
-      return NextResponse.json({ error: "Failed to update business settings" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Failed to update business settings" },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ settings: data });
