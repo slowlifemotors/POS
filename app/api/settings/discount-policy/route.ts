@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getSession } from "@/lib/auth";
 
+export const runtime = "nodejs";
+
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_KEY!,
@@ -24,9 +26,18 @@ function toInt(value: unknown, fallback: number) {
   return Math.trunc(n);
 }
 
-export async function GET() {
+async function requireSession(req: Request) {
+  // IMPORTANT: matches the pattern used elsewhere in your app
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  (globalThis as any).__session_cookie_header = cookieHeader;
+
+  const session = await getSession();
+  return session?.staff ? session : null;
+}
+
+export async function GET(req: Request) {
   try {
-    const session = await getSession();
+    const session = await requireSession(req);
     if (!session?.staff) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -66,7 +77,7 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
-    const session = await getSession();
+    const session = await requireSession(req);
     if (!session?.staff) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
