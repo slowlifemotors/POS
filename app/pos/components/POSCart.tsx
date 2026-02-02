@@ -14,6 +14,14 @@ type Discount = {
   percent: number;
 } | null;
 
+function fmtMoney2(n: number) {
+  return Number(n || 0).toFixed(2);
+}
+
+function fmtMoney0(n: number) {
+  return Math.ceil(Number(n || 0)).toLocaleString();
+}
+
 export default function POSCart({
   cart,
   updateQty,
@@ -29,7 +37,7 @@ export default function POSCart({
   originalTotal: number;
   discount: Discount;
   discountAmount: number;
-  finalTotal: number;
+  finalTotal: number; // already rounded up by usePOS
 }) {
   return (
     <>
@@ -46,9 +54,7 @@ export default function POSCart({
             >
               <div>
                 <p className="font-semibold text-slate-50">{item.name}</p>
-                <p className="text-slate-300 text-sm">
-                  ${item.price.toFixed(2)}
-                </p>
+                <p className="text-slate-300 text-sm">${fmtMoney2(item.price)}</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -84,17 +90,18 @@ export default function POSCart({
 
       <div className="border-t border-slate-700 pt-4 mt-4">
         <p className="text-lg font-semibold text-slate-300">
-          Subtotal: ${originalTotal.toFixed(2)}
+          Subtotal: ${fmtMoney2(originalTotal)}
         </p>
 
         {discount && (
           <p className="text-lg font-semibold text-amber-400">
-            Discount: -${discountAmount.toFixed(2)}
+            Discount: -${fmtMoney2(discountAmount)}
           </p>
         )}
 
+        {/* ✅ Total is whole dollars (already rounded up) */}
         <p className="text-xl font-bold text-slate-50 mt-1">
-          Total: ${finalTotal.toFixed(2)}
+          Total: ${fmtMoney0(finalTotal)}
         </p>
       </div>
     </>

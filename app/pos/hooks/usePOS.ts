@@ -331,12 +331,18 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // TOTALS (still computed; stored on order)
+  // TOTALS
+  // RULE: POS final total is ALWAYS rounded UP to the next full dollar.
   // -------------------------
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discountPercent = discount ? discount.percent : 0;
   const discountAmount = (subtotal * discountPercent) / 100;
-  const total = roundToCents(subtotal - discountAmount);
+
+  // keep cents precision for internal math (optional), but final is CEIL dollars
+  const rawTotal = roundToCents(subtotal - discountAmount);
+
+  // ✅ FINAL TOTAL = round up to next full dollar
+  const total = Math.ceil(rawTotal);
 
   // -------------------------
   // BLACKLIST CHECK
@@ -425,9 +431,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
         vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
 
+        // subtotal / discount stored as cents precision (fine)
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount),
-        total: roundToCents(total),
+
+        // ✅ total stored as WHOLE DOLLARS (already rounded up)
+        total,
 
         note: note?.trim() || null,
 
@@ -481,7 +490,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     discount,
     originalTotal: subtotal,
     discountAmount,
-    finalTotal: total,
+    finalTotal: total, // ✅ now whole dollars (integer)
     paymentMethod,
     isCheckoutOpen,
     showCustomerModal,

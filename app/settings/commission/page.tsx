@@ -12,81 +12,84 @@ interface CommissionRate {
 export default function CommissionSettingsPage() {
   const [session, setSession] = useState<null | {
     role: string;
-    permissions_level?: number;
+    permissions_level: number;
   }>(null);
 
   const [rates, setRates] = useState<CommissionRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const isManagerOrAbove = (() => {
-    // Prefer permissions_level if present, otherwise fall back to role
-    const r = (session?.role ?? "").toLowerCase();
-    if (typeof session?.permissions_level === "number") {
-      return session.permissions_level >= 800;
-    }
-    return r === "manager" || r === "admin" || r === "owner";
-  })();
+  // ✅ Discount policy settings
+  const [staffDiscountAlwaysOn, setStaffDiscountAlwaysOn] = useState(false);
+  const [minMonthlyHours, setMinMonthlyHours] = useState<number>(0);
+  const [loadingPolicy, setLoadingPolicy] = useState(true);
 
-  const isAdminOrOwner = (() => {
-    const r = (session?.role ?? "").toLowerCase();
-    return r === "admin" || r === "owner";
-  })();
+  const isManagerOrAbove =
+    session?.permissions_level !== undefined &&
+    session.permissions_level >= 800;
 
+  const isAdminOrOwner = session?.role === "admin" || session?.role === "owner";
   const canEdit = isAdminOrOwner;
 
-  // ---------------------------------------------------------
-  // LOAD SESSION + RATES
-  // ---------------------------------------------------------
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
 
     async function load() {
-      setLoading(true);
-      setErrorMsg(null);
-
       try {
         const sRes = await fetch("/api/auth/session", { cache: "no-store" });
         const sJson = await sRes.json();
+        if (cancelled) return;
+        setSession(sJson.staff || null);
 
-        if (!alive) return;
-        setSession(sJson?.staff || null);
-
-        const rRes = await fetch("/api/settings/commission", { cache: "no-store" });
-        const rJson = await rRes.json();
-
-        if (!alive) return;
-
-        if (!rRes.ok) {
-          setRates([]);
-          setErrorMsg(rJson?.error || "Failed to load commission settings.");
-          return;
+        // discount policy
+        try {
+          const pRes = await fetch("/api/settings/discount-policy", {
+            cache: "no-store",
+          });
+          const pJson = await pRes.json();
+          if (!cancelled) {
+            setStaffDiscountAlwaysOn(Boolean(pJson?.staff_discount_always_on));
+            setMinMonthlyHours(
+              Number.isFinite(Number(pJson?.staff_discount_min_monthly_hours))
+                ? Number(pJson.staff_discount_min_monthly_hours)
+                : 0
+            );
+          }
+        } catch {
+          // non-fatal
+        } finally {
+          if (!cancelled) setLoadingPolicy(false);
         }
 
-        const list = Array.isArray(rJson?.roles) ? rJson.roles : [];
-        const mapped: CommissionRate[] = list.map((x: any) => ({
-          role: String(x.role ?? ""),
-          rate: Number(x.rate ?? 0),
-          hourly_rate: Number(x.hourly_rate ?? 0),
-        }));
+        // existing settings page data
+        const rRes = await fetch("/api/settings", { cache: "no-store" });
+        if (!rRes.ok) throw new Error("Settings fetch failed.");
 
-        setRates(mapped);
-      } catch (err: any) {
-        console.error("Commission settings load error:", err);
-        if (!alive) return;
-        setRates([]);
-        setErrorMsg("Failed to load settings (check server logs).");
+        const data = await rRes.json();
+        if (cancelled) return;
+
+        const merged: CommissionRate[] = data.commission_rates.map((cr: any) => {
+          const hr = data.hourly_rates.find(
+            (h: any) => h.role.toLowerCase() === cr.role.toLowerCase()
+          );
+          return {
+            role: cr.role,
+            rate: Number(cr.rate),
+            hourly_rate: hr ? Number(hr.hourly_rate) : 0,
+          };
+        });
+
+        setRates(merged);
+      } catch (err) {
+        console.error("Commission settings load failed:", err);
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     load();
-
     return () => {
-      alive = false;
+      cancelled = true;
     };
   }, []);
 
@@ -102,11 +105,21 @@ export default function CommissionSettingsPage() {
     if (!canEdit) return;
 
     setSaving(true);
-    setErrorMsg(null);
 
     try {
+      // save discount policy
+      await fetch("/api/settings/discount-policy", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          staff_discount_always_on: staffDiscountAlwaysOn,
+          staff_discount_min_monthly_hours: minMonthlyHours,
+        }),
+      });
+
+      // existing per-role saves
       for (const entry of rates) {
-        const res = await fetch("/api/settings/commission", {
+        await fetch("/api/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -115,17 +128,9 @@ export default function CommissionSettingsPage() {
             hourly_rate: entry.hourly_rate,
           }),
         });
-
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}));
-          throw new Error(j?.error || `Failed updating role: ${entry.role}`);
-        }
       }
 
       alert("Settings updated successfully!");
-    } catch (err: any) {
-      console.error("Save changes error:", err);
-      setErrorMsg(err?.message || "Failed to save changes.");
     } finally {
       setSaving(false);
     }
@@ -146,18 +151,70 @@ export default function CommissionSettingsPage() {
       </h1>
 
       <p className="text-slate-400 mb-6">
-        Commission is calculated on <strong>profit</strong>, where profit is defined as{" "}
-        <strong>(order total / 2) minus discount</strong>.
-        <br />
+        Commission is calculated on <strong>profit</strong>.<br />
         Hourly rates apply to all recorded work hours.
       </p>
 
-      {errorMsg && (
-        <div className="mb-6 p-3 rounded-lg border border-red-700/50 bg-red-900/20 text-red-200 text-sm">
-          {errorMsg}
-        </div>
-      )}
+      {/* ✅ Discount Policy */}
+      <div className="bg-slate-900 border border-slate-700 rounded-lg p-6 mb-6">
+        <h2 className="text-xl font-bold text-white mb-2">Discount Policy</h2>
+        <p className="text-slate-400 text-sm mb-4">
+          If enabled, <strong>everyone gets the staff discount</strong> regardless of hours.
+          If disabled, staff discount requires meeting the minimum monthly hours below.
+        </p>
 
+        {loadingPolicy ? (
+          <p className="text-slate-400">Loading discount policy...</p>
+        ) : (
+          <div className="space-y-4">
+            <label className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                disabled={!canEdit}
+                checked={staffDiscountAlwaysOn}
+                onChange={(e) => setStaffDiscountAlwaysOn(e.target.checked)}
+                className="h-5 w-5 accent-[color:var(--accent)]"
+              />
+              <span className={`text-slate-200 ${!canEdit ? "opacity-50" : ""}`}>
+                Always apply staff discount (ignore hours requirement)
+              </span>
+            </label>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-slate-200 font-semibold">
+                  Minimum Monthly Hours
+                </p>
+                <p className="text-slate-500 text-sm">
+                  Used only when “Always apply” is OFF.
+                </p>
+              </div>
+
+              <input
+                type="number"
+                min={0}
+                max={500}
+                disabled={!canEdit || staffDiscountAlwaysOn}
+                value={minMonthlyHours}
+                onChange={(e) => setMinMonthlyHours(Number(e.target.value))}
+                className={`bg-slate-800 px-3 py-2 rounded border border-slate-700 w-28 outline-none text-slate-100 ${
+                  !canEdit || staffDiscountAlwaysOn
+                    ? "opacity-50 cursor-not-allowed"
+                    : ""
+                }`}
+              />
+            </div>
+
+            {!canEdit && (
+              <p className="text-xs text-slate-500">
+                Only Admin/Owner can change this.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Existing commission/hourly table */}
       <div className="bg-slate-900 border border-slate-700 rounded-lg p-6">
         <table className="w-full">
           <thead className="bg-slate-800 border-b border-slate-700 text-slate-300">
@@ -184,8 +241,6 @@ export default function CommissionSettingsPage() {
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
                     }`}
                     value={r.rate}
-                    min={0}
-                    max={100}
                     onChange={(e) => {
                       const updated = rates.map((x) =>
                         x.role === r.role
@@ -205,7 +260,6 @@ export default function CommissionSettingsPage() {
                       !canEdit ? "opacity-50 cursor-not-allowed" : ""
                     }`}
                     value={r.hourly_rate}
-                    min={0}
                     onChange={(e) => {
                       const updated = rates.map((x) =>
                         x.role === r.role

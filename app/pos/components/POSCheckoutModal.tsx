@@ -3,13 +3,17 @@
 
 import { useState } from "react";
 
+function fmtMoney0(n: number) {
+  return Math.ceil(Number(n || 0)).toLocaleString();
+}
+
 export default function POSCheckoutModal({
   finalTotal,
   onConfirm,
   onClose,
   isPaying,
 }: {
-  finalTotal: number;
+  finalTotal: number; // already rounded up by usePOS
   onConfirm: (note: string) => void;
   onClose: () => void;
   isPaying: boolean;
@@ -24,7 +28,7 @@ export default function POSCheckoutModal({
         <p className="text-lg">
           Total:{" "}
           <span className="font-bold text-emerald-400">
-            ${finalTotal.toFixed(2)}
+            ${fmtMoney0(finalTotal)}
           </span>
         </p>
 
