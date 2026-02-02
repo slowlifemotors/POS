@@ -118,7 +118,8 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [modsRoot, setModsRoot] = useState<ModNode | null>(null);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState("cash");
+  // POS is card-only. Keep state for compatibility, but lock it to "card".
+  const [paymentMethod, setPaymentMethod] = useState<"card">("card");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -130,6 +131,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
+
+  // Used by checkout UI to prevent double-submits
+  const [isPaying, setIsPaying] = useState(false);
 
   // -------------------------
   // LOAD VEHICLES
@@ -186,7 +190,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // LOAD TABS (kept for now; payment later)
+  // LOAD TABS (kept for now; not used in card-only POS flow)
   // -------------------------
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
@@ -383,9 +387,11 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // CREATE ORDER (new checkout)
+  // CREATE ORDER (CARD-ONLY, INSTANT PAID)
   // -------------------------
   const createOrder = async (note: string) => {
+    if (isPaying) return;
+
     if (isBlacklisted) {
       alert("This customer is currently blacklisted.");
       return;
@@ -401,52 +407,58 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    const payload = {
-      staff_id: staffId,
-      vehicle_id: selectedVehicle.id,
-      customer_id: selectedCustomer ? selectedCustomer.id : null,
-      discount_id: discount ? discount.id : null,
+    try {
+      setIsPaying(true);
 
-      vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
+      const payload = {
+        staff_id: staffId,
+        vehicle_id: selectedVehicle.id,
+        customer_id: selectedCustomer ? selectedCustomer.id : null,
+        discount_id: discount ? discount.id : null,
 
-      subtotal: roundToCents(subtotal),
-      discount_amount: roundToCents(discountAmount),
-      total: roundToCents(total),
+        vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
 
-      note: note?.trim() || null,
+        subtotal: roundToCents(subtotal),
+        discount_amount: roundToCents(discountAmount),
+        total: roundToCents(total),
 
-      lines: cart.map((c) => ({
-        vehicle_id: c.vehicle_id,
-        mod_id: c.mod_id,
-        mod_name: c.mod_name,
-        quantity: c.quantity,
-        computed_price: c.computed_price,
-        pricing_type: c.pricing_type,
-        pricing_value: c.pricing_value,
-      })),
-    };
+        note: note?.trim() || null,
 
-    const res = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+        lines: cart.map((c) => ({
+          vehicle_id: c.vehicle_id,
+          mod_id: c.mod_id,
+          mod_name: c.mod_name,
+          quantity: c.quantity,
+          computed_price: c.computed_price,
+          pricing_type: c.pricing_type,
+          pricing_value: c.pricing_value,
+        })),
+      };
 
-    const json = await res.json().catch(() => ({}));
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      alert(json.error || "Failed to create order.");
-      return;
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        alert(json.error || "Failed to complete sale.");
+        return;
+      }
+
+      // Reset POS state for next sale
+      setCart([]);
+      setIsCheckoutOpen(false);
+      setSelectedCustomer(null);
+      setDiscount(null);
+      setSelectedVehicle(null);
+
+      alert(`Sale completed! (Card) Order ID: ${json.order_id}`);
+    } finally {
+      setIsPaying(false);
     }
-
-    // Reset POS state for next job
-    setCart([]);
-    setIsCheckoutOpen(false);
-    setSelectedCustomer(null);
-    setDiscount(null);
-    setSelectedVehicle(null);
-
-    alert(`Job created! Order ID: ${json.order_id}`);
   };
 
   return {
@@ -468,6 +480,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     showCustomerModal,
     showEditCustomerModal,
     isBlacklisted,
+    isPaying,
 
     // actions
     setSearchTerm,
@@ -476,14 +489,17 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     addModToCart,
     updateQty,
     removeItem,
-    setPaymentMethod,
+
+    // locked to "card", kept for compatibility
+    setPaymentMethod: (_: any) => setPaymentMethod("card"),
+
     setIsCheckoutOpen,
     setShowCustomerModal,
     setShowEditCustomerModal,
     handleSelectCustomer,
     refreshCustomer,
 
-    // new
+    // checkout
     createOrder,
     reloadModsTree: loadModsTree,
   };

@@ -44,8 +44,8 @@ async function requireSession(req: Request) {
 }
 
 /**
- * GET /api/orders?status=open|paid|void|all
- * Lists recent orders (jobs)
+ * GET /api/orders?status=paid|void|all
+ * Lists recent orders (Jobs history) — manager+ only
  */
 export async function GET(req: Request) {
   const session = await requireSession(req);
@@ -59,7 +59,7 @@ export async function GET(req: Request) {
 
   try {
     const url = new URL(req.url);
-    const status = (url.searchParams.get("status") ?? "open").toLowerCase();
+    const status = (url.searchParams.get("status") ?? "paid").toLowerCase();
 
     let query = supabaseServer
       .from("orders")
@@ -70,7 +70,7 @@ export async function GET(req: Request) {
       .limit(200);
 
     if (status !== "all") {
-      if (status !== "open" && status !== "paid" && status !== "void") {
+      if (status !== "paid" && status !== "void") {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });
       }
       query = query.eq("status", status);
@@ -92,7 +92,7 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/orders
- * Creates a new OPEN job (order)
+ * Card-only POS flow: creates a new PAID order immediately
  */
 export async function POST(req: Request) {
   const session = await requireSession(req);
@@ -191,11 +191,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // Create order (open)
+    // Create order (PAID)
     const { data: order, error: orderErr } = await supabaseServer
       .from("orders")
       .insert({
-        status: "open",
+        status: "paid",
         vehicle_id,
         staff_id,
         customer_id,

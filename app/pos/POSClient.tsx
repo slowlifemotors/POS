@@ -61,15 +61,21 @@ export default function POSClient({
 
         <button
           onClick={() => pos.setIsCheckoutOpen(true)}
-          disabled={pos.cart.length === 0 || !pos.selectedVehicle}
-          className="mt-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white py-3 rounded-lg shadow-lg font-semibold"
+          disabled={pos.cart.length === 0 || !pos.selectedVehicle || pos.isPaying}
+          className="mt-4 bg-(--accent) hover:(--accent-hover) disabled:bg-slate-700 disabled:text-slate-400 text-white py-3 rounded-lg shadow-lg font-semibold"
         >
-          Create Job
+          {pos.isPaying ? "Processing..." : "Pay (Card)"}
         </button>
 
         {!pos.selectedVehicle && (
           <p className="mt-2 text-xs text-slate-400 text-center">
             Select a vehicle to add mods.
+          </p>
+        )}
+
+        {pos.isBlacklisted && (
+          <p className="mt-2 text-xs text-red-400 text-center font-semibold">
+            This customer is currently blacklisted — checkout is blocked.
           </p>
         )}
       </div>
@@ -97,6 +103,7 @@ export default function POSClient({
           finalTotal={pos.finalTotal}
           onConfirm={(note) => pos.createOrder(note)}
           onClose={() => pos.setIsCheckoutOpen(false)}
+          isPaying={pos.isPaying}
         />
       )}
     </div>
