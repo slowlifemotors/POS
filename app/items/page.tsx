@@ -157,7 +157,7 @@ export default function ItemsPage() {
 
         <button
           onClick={() => openModal()}
-          className="bg-[color:var(--accent)] hover:bg-[color:var(--accent-hover)] px-4 py-2 rounded-lg"
+          className="bg-(--accent) hover:bg-(--accent-hover) px-4 py-2 rounded-lg"
         >
           + Add Vehicle
         </button>
@@ -231,7 +231,7 @@ export default function ItemsPage() {
 
       {/* MODAL */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[1000]">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-1000">
           <div className="bg-slate-900 p-6 rounded-xl w-[520px] border border-slate-700 shadow-2xl">
             <h2 className="text-2xl font-bold mb-4">
               {editing ? "Edit Vehicle" : "Add Vehicle"}

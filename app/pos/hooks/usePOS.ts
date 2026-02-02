@@ -16,15 +16,34 @@ export type Vehicle = {
   active: boolean;
 };
 
+export type ModPricingType = "percentage" | "flat";
+
+export type ModNode = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  display_order: number;
+  is_menu: boolean;
+  pricing_type: ModPricingType | null;
+  pricing_value: number | null;
+  active: boolean;
+  children: ModNode[];
+};
+
 export type CartItem = {
-  id: number; // item_id from `items` table (the mod item id)
+  id: string; // stable cart line id (vehicle_id:mod_id)
   name: string; // display name: "<Vehicle> — <Mod>"
-  price: number; // computed % of vehicle base_price
+  price: number; // computed unit price
   quantity: number;
 
-  // metadata (not used by API directly, but useful later)
+  // REQUIRED metadata
   vehicle_id: number;
-  mod_key: string;
+  mod_id: string;
+  mod_name: string;
+  computed_price: number; // same as price (explicitly stored)
+
+  pricing_type: ModPricingType;
+  pricing_value: number;
 };
 
 export type Customer = {
@@ -57,90 +76,6 @@ type UsePOSArgs = {
   staffName?: string;
 };
 
-type ModDef = {
-  key: string;
-  label: string;
-  percent: number;
-};
-
-type ModWithItem = ModDef & {
-  item_id: number | null; // from items table
-};
-
-const MODS: ModDef[] = [
-  // Performance
-  { key: "armour", label: "Armour", percent: 7 },
-  { key: "brakes", label: "Brakes", percent: 6 },
-  { key: "engine", label: "Engine", percent: 11 },
-  { key: "suspension", label: "Suspension", percent: 5 },
-  { key: "transmission", label: "Transmission", percent: 6 },
-  { key: "turbo", label: "Turbo", percent: 7 },
-
-  // Exterior
-  { key: "exhaust", label: "Exhaust", percent: 1.56 },
-  { key: "left_fender", label: "Left Fender", percent: 1.12 },
-  { key: "cage", label: "Cage", percent: 1.12 },
-  { key: "front_bumper", label: "Front Bumper", percent: 1.34 },
-  { key: "grille", label: "Grille", percent: 1.72 },
-  { key: "hood", label: "Hood", percent: 1.88 },
-  { key: "rear_bumper", label: "Rear Bumper", percent: 1.55 },
-  { key: "right_fender", label: "Right Fender", percent: 1.12 },
-  { key: "roof", label: "Roof", percent: 1.58 },
-  { key: "sideskirt", label: "Sideskirt", percent: 1.59 },
-  { key: "spoilers", label: "Spoilers", percent: 1.65 },
-
-  // Interior / misc
-  { key: "aerial", label: "Aerial", percent: 1.12 },
-  { key: "air_filter", label: "Air Filter", percent: 1.75 },
-  { key: "arch_cover", label: "Arch Cover", percent: 1.19 },
-  { key: "dashboard", label: "Dashboard", percent: 1.65 },
-  { key: "door_speakers", label: "Door Speakers", percent: 1.58 },
-  { key: "engine_block", label: "Engine Block", percent: 1.12 },
-  { key: "fuel_tank", label: "Fuel Tank", percent: 1.13 },
-  { key: "gear_lever", label: "Gear Lever", percent: 1.26 },
-  { key: "hydraulic", label: "Hydraulic", percent: 1.12 },
-  { key: "interior", label: "Interior", percent: 1.98 },
-  { key: "quarter_deck", label: "Quarter Deck", percent: 1.19 },
-  { key: "seats", label: "Seats", percent: 1.65 },
-  { key: "speakers", label: "Speakers", percent: 1.98 },
-  { key: "speedometer", label: "Speedometer", percent: 1.19 },
-  { key: "steering_wheel", label: "Steering Wheel", percent: 1.19 },
-  { key: "stickers", label: "Stickers", percent: 1.3 },
-  { key: "struts", label: "Struts", percent: 1.51 },
-  { key: "trim", label: "Trim", percent: 1.98 },
-  { key: "trunk", label: "Trunk", percent: 1.58 },
-  { key: "windows", label: "Windows", percent: 1.19 },
-  { key: "wing", label: "Wing", percent: 1.05 },
-
-  // Lights / paint
-  { key: "horn", label: "Horn", percent: 0.65 },
-  { key: "license_plate", label: "License Plate", percent: 1.1 },
-  { key: "neon", label: "Neon", percent: 0.93 },
-  { key: "pearlescent", label: "Pearlescent", percent: 0.75 },
-  { key: "plate_holder", label: "Plate Holder", percent: 0.49 },
-  { key: "primary", label: "Primary", percent: 1.02 },
-  { key: "secondary", label: "Secondary", percent: 0.5 },
-  { key: "vanity_plate", label: "Vanity Plate", percent: 0.41 },
-  { key: "window_tint", label: "Window Tint", percent: 0.8 },
-  { key: "xenon_headlights", label: "Xenon Headlights", percent: 1.92 },
-
-  // Wheels
-  { key: "allterrain", label: "Allterrain", percent: 1.19 },
-  { key: "bennys", label: "Bennys", percent: 1.12 },
-  { key: "bennys2", label: "Bennys2", percent: 1.12 },
-  { key: "dragster", label: "Dragster", percent: 1.12 },
-  { key: "highend", label: "Highend", percent: 1.12 },
-  { key: "lowrider", label: "Lowrider", percent: 1.65 },
-  { key: "motorcycle", label: "Motorcycle", percent: 1.26 },
-  { key: "muscle", label: "Muscle", percent: 1.19 },
-  { key: "sport", label: "Sport", percent: 4.65 },
-  { key: "street", label: "Street", percent: 1.12 },
-  { key: "suv", label: "Suv", percent: 1.19 },
-  { key: "track", label: "Track", percent: 1.12 },
-  { key: "tuning", label: "Tuning", percent: 1.12 },
-  { key: "wheel_color", label: "Wheel Color", percent: 1.66 },
-];
-
 function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
@@ -152,16 +87,35 @@ function vehicleDisplayName(v: Vehicle) {
   return name || `Vehicle #${v.id}`;
 }
 
+function flattenMods(root: ModNode | null) {
+  const map = new Map<string, ModNode>();
+  if (!root) return map;
+
+  const walk = (n: ModNode) => {
+    map.set(n.id, n);
+    (n.children ?? []).forEach(walk);
+  };
+
+  walk(root);
+  return map;
+}
+
+function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
+  if (!mod.pricing_type || mod.pricing_value == null) return null;
+
+  if (mod.pricing_type === "percentage") {
+    const pct = Number(mod.pricing_value);
+    return roundToCents((vehicleBasePrice * pct) / 100);
+  }
+
+  return roundToCents(Number(mod.pricing_value));
+}
+
 export default function usePOS({ staffId }: UsePOSArgs) {
-  // -------------------------------------------------------
-  // STATE
-  // -------------------------------------------------------
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
-  const [mods, setMods] = useState<ModWithItem[]>(
-    MODS.map((m) => ({ ...m, item_id: null }))
-  );
+  const [modsRoot, setModsRoot] = useState<ModNode | null>(null);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -170,7 +124,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
-  // Customer modals
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
 
@@ -178,9 +131,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
-  // -------------------------------------------------------
+  // -------------------------
   // LOAD VEHICLES
-  // -------------------------------------------------------
+  // -------------------------
   const loadVehicles = async () => {
     const { data, error } = await supabase
       .from("vehicles")
@@ -211,41 +164,30 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setVehicles(rows);
   };
 
-  // -------------------------------------------------------
-  // LOAD MOD ITEMS (from items table)
-  // -------------------------------------------------------
-  const loadModItems = async () => {
-    const modNames = MODS.map((m) => m.label);
+  // -------------------------
+  // LOAD MODS TREE
+  // -------------------------
+  const loadModsTree = async () => {
+    try {
+      const res = await fetch("/api/mods/tree", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      const root = json?.root ?? null;
 
-    const { data, error } = await supabase
-      .from("items")
-      .select("id, name")
-      .in("name", modNames);
+      if (!root) {
+        setModsRoot(null);
+        return;
+      }
 
-    if (error) {
-      console.error("Failed to load mod items:", error);
-      setMods(MODS.map((m) => ({ ...m, item_id: null })));
-      return;
+      setModsRoot(root as ModNode);
+    } catch (err) {
+      console.error("Failed to load mods tree:", err);
+      setModsRoot(null);
     }
-
-    const byName = new Map<string, number>();
-    (data ?? []).forEach((row: any) => {
-      const name = typeof row.name === "string" ? row.name.trim() : "";
-      if (!name) return;
-      byName.set(name, Number(row.id));
-    });
-
-    setMods(
-      MODS.map((m) => ({
-        ...m,
-        item_id: byName.get(m.label) ?? null,
-      }))
-    );
   };
 
-  // -------------------------------------------------------
-  // LOAD TABS
-  // -------------------------------------------------------
+  // -------------------------
+  // LOAD TABS (kept for now; payment later)
+  // -------------------------
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
     const json = await res.json();
@@ -255,13 +197,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   useEffect(() => {
     loadVehicles();
-    loadModItems();
+    loadModsTree();
     loadTabs();
   }, []);
 
-  // -------------------------------------------------------
+  // -------------------------
   // FILTER VEHICLES
-  // -------------------------------------------------------
+  // -------------------------
   const filteredVehicles = useMemo(() => {
     const s = searchTerm.trim().toLowerCase();
     const base = vehicles.filter((v) => v.active);
@@ -283,10 +225,11 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     });
   }, [vehicles, searchTerm]);
 
-  // -------------------------------------------------------
-  // SELECT VEHICLE
-  // (clear cart because pricing depends on base_price)
-  // -------------------------------------------------------
+  const modsById = useMemo(() => flattenMods(modsRoot), [modsRoot]);
+
+  // -------------------------
+  // SELECT VEHICLE (clears cart)
+  // -------------------------
   const selectVehicle = (v: Vehicle) => {
     setSelectedVehicle(v);
     setCart([]);
@@ -299,61 +242,68 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setIsCheckoutOpen(false);
   };
 
-  // -------------------------------------------------------
+  // -------------------------
   // ADD MOD TO CART
-  // Fix: ensure item_id is narrowed to number before using it
-  // -------------------------------------------------------
-  const addModToCart = (modKey: string) => {
+  // -------------------------
+  const addModToCart = (modId: string) => {
     if (!selectedVehicle) {
       alert("Select a vehicle first.");
       return;
     }
 
-    const mod = mods.find((m) => m.key === modKey);
+    const mod = modsById.get(modId);
     if (!mod) return;
+    if (mod.is_menu) return;
 
-    const itemId = mod.item_id;
-    if (itemId == null) {
-      alert(
-        `Missing mod item in items table for "${mod.label}". Create an item row with name "${mod.label}".`
-      );
+    const pt = mod.pricing_type;
+    const pv = mod.pricing_value;
+
+    if (!pt || pv == null) {
+      alert(`"${mod.name}" has no pricing set. Configure it in /mods.`);
       return;
     }
 
-    const vehicleName = vehicleDisplayName(selectedVehicle);
-    const price = roundToCents((selectedVehicle.base_price * mod.percent) / 100);
+    const computed = computeModPrice(mod, selectedVehicle.base_price);
+    if (computed == null) {
+      alert(`"${mod.name}" has invalid pricing. Configure it in /mods.`);
+      return;
+    }
+
+    const lineId = `${selectedVehicle.id}:${mod.id}`;
+    const vName = vehicleDisplayName(selectedVehicle);
 
     setCart((prev) => {
-      const existing = prev.find(
-        (c) => c.vehicle_id === selectedVehicle.id && c.mod_key === mod.key
-      );
+      const existing = prev.find((c) => c.id === lineId);
 
       if (existing) {
         return prev.map((c) =>
-          c.vehicle_id === selectedVehicle.id && c.mod_key === mod.key
-            ? { ...c, quantity: c.quantity + 1 }
-            : c
+          c.id === lineId ? { ...c, quantity: c.quantity + 1 } : c
         );
       }
 
       return [
         ...prev,
         {
-          id: itemId,
-          name: `${vehicleName} — ${mod.label}`,
-          price,
+          id: lineId,
+          name: `${vName} — ${mod.name}`,
+          price: computed,
+          computed_price: computed,
           quantity: 1,
+
           vehicle_id: selectedVehicle.id,
-          mod_key: mod.key,
+          mod_id: mod.id,
+          mod_name: mod.name,
+          pricing_type: pt,
+          pricing_value: Number(pv),
         },
       ];
     });
   };
 
-  // -------------------------------------------------------
+  // -------------------------
   // CART MANAGEMENT
-  // -------------------------------------------------------
-  const updateQty = (id: number, amt: number) => {
+  // -------------------------
+  const updateQty = (id: string, amt: number) => {
     setCart((prev) =>
       prev
         .map((item) =>
@@ -365,25 +315,21 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     );
   };
 
-  const removeItem = (id: number) => {
+  const removeItem = (id: string) => {
     setCart((prev) => prev.filter((i) => i.id !== id));
   };
 
-  // -------------------------------------------------------
-  // TOTALS
-  // -------------------------------------------------------
-  const originalTotal = cart.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
-
+  // -------------------------
+  // TOTALS (still computed; stored on order)
+  // -------------------------
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discountPercent = discount ? discount.percent : 0;
-  const discountAmount = (originalTotal * discountPercent) / 100;
-  const finalTotal = roundToCents(originalTotal - discountAmount);
+  const discountAmount = (subtotal * discountPercent) / 100;
+  const total = roundToCents(subtotal - discountAmount);
 
-  // -------------------------------------------------------
+  // -------------------------
   // BLACKLIST CHECK
-  // -------------------------------------------------------
+  // -------------------------
   useEffect(() => {
     if (!selectedCustomer) {
       setIsBlacklisted(false);
@@ -405,18 +351,18 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
   }, [selectedCustomer]);
 
-  // -------------------------------------------------------
+  // -------------------------
   // CUSTOMER SELECTION
-  // -------------------------------------------------------
+  // -------------------------
   const handleSelectCustomer = (customer: Customer, disc: Discount | null) => {
     setSelectedCustomer(customer);
     setDiscount(disc);
     setShowCustomerModal(false);
   };
 
-  // -------------------------------------------------------
+  // -------------------------
   // REFRESH CUSTOMER
-  // -------------------------------------------------------
+  // -------------------------
   const refreshCustomer = async () => {
     if (!selectedCustomer) return;
 
@@ -436,94 +382,71 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
   };
 
-  // -------------------------------------------------------
-  // COMPLETE SALE
-  // -------------------------------------------------------
-  const completeSale = async (payment: string) => {
+  // -------------------------
+  // CREATE ORDER (new checkout)
+  // -------------------------
+  const createOrder = async (note: string) => {
     if (isBlacklisted) {
       alert("This customer is currently blacklisted.");
       return;
     }
 
     if (!selectedVehicle) {
-      alert("Select a vehicle before checkout.");
+      alert("Select a vehicle first.");
       return;
     }
 
-    const method = (payment || paymentMethod || "").toString();
-
-    // TAB logic (compatible with existing system)
-    if (method.startsWith("tab:")) {
-      const tabId = Number(method.replace("tab:", ""));
-      const selectedTab = tabs.find((t) => t.id === tabId);
-
-      if (!selectedTab) {
-        alert("Selected tab not found.");
-        return;
-      }
-
-      if (selectedTab.amount < finalTotal) {
-        alert("Not enough funds on this tab.");
-        return;
-      }
-
-      const update = await fetch("/api/tabs/update-balance", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tab_id: selectedTab.id,
-          new_amount: selectedTab.amount - finalTotal,
-        }),
-      });
-
-      if (!update.ok) {
-        alert("Failed to update tab balance.");
-        return;
-      }
+    if (cart.length === 0) {
+      alert("Cart is empty.");
+      return;
     }
 
-    // /api/sales expects { id, quantity, price }
-    const cartPayload = cart.map((c) => ({
-      id: c.id,
-      quantity: c.quantity,
-      price: c.price,
+    const payload = {
+      staff_id: staffId,
+      vehicle_id: selectedVehicle.id,
+      customer_id: selectedCustomer ? selectedCustomer.id : null,
+      discount_id: discount ? discount.id : null,
 
-      // extra metadata (ignored by API today, useful later)
-      name: c.name,
-      vehicle_id: c.vehicle_id,
-      mod_key: c.mod_key,
-    }));
+      vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
 
-    const response = await fetch("/api/sales", {
+      subtotal: roundToCents(subtotal),
+      discount_amount: roundToCents(discountAmount),
+      total: roundToCents(total),
+
+      note: note?.trim() || null,
+
+      lines: cart.map((c) => ({
+        vehicle_id: c.vehicle_id,
+        mod_id: c.mod_id,
+        mod_name: c.mod_name,
+        quantity: c.quantity,
+        computed_price: c.computed_price,
+        pricing_type: c.pricing_type,
+        pricing_value: c.pricing_value,
+      })),
+    };
+
+    const res = await fetch("/api/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        staff_id: staffId,
-        customer_id: selectedCustomer ? selectedCustomer.id : null,
-        original_total: originalTotal,
-        final_total: finalTotal,
-        discount_id: discount ? discount.id : null,
-        payment_method: method,
-        cart: cartPayload,
-      }),
+      body: JSON.stringify(payload),
     });
 
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      alert(result.error || "Sale failed");
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(json.error || "Failed to create order.");
       return;
     }
 
-    await loadVehicles();
-    await loadTabs();
-
+    // Reset POS state for next job
     setCart([]);
     setIsCheckoutOpen(false);
     setSelectedCustomer(null);
     setDiscount(null);
     setSelectedVehicle(null);
 
-    alert("Sale Completed!");
+    alert(`Job created! Order ID: ${json.order_id}`);
   };
 
   return {
@@ -531,16 +454,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     vehicles,
     filteredVehicles,
     selectedVehicle,
-    mods,
-
+    modsRoot,
     tabs,
     cart,
     searchTerm,
     selectedCustomer,
     discount,
-    originalTotal,
+    originalTotal: subtotal,
     discountAmount,
-    finalTotal,
+    finalTotal: total,
     paymentMethod,
     isCheckoutOpen,
     showCustomerModal,
@@ -560,6 +482,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setShowEditCustomerModal,
     handleSelectCustomer,
     refreshCustomer,
-    completeSale,
+
+    // new
+    createOrder,
+    reloadModsTree: loadModsTree,
   };
 }

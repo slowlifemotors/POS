@@ -2,7 +2,7 @@
 "use client";
 
 type CartItem = {
-  id: number;
+  id: string;
   name: string;
   price: number;
   quantity: number;
@@ -24,8 +24,8 @@ export default function POSCart({
   finalTotal,
 }: {
   cart: CartItem[];
-  updateQty: (id: number, amt: number) => void;
-  removeItem: (id: number) => void;
+  updateQty: (id: string, amt: number) => void;
+  removeItem: (id: string) => void;
   originalTotal: number;
   discount: Discount;
   discountAmount: number;
@@ -35,7 +35,6 @@ export default function POSCart({
     <>
       <h2 className="text-2xl font-bold mb-4 text-slate-50">Cart</h2>
 
-      {/* IMPROVED HEIGHT CONTROL */}
       <div className="max-h-[55vh] overflow-y-auto space-y-3">
         {cart.length === 0 ? (
           <p className="text-slate-500 mt-5 text-center">Cart is empty</p>

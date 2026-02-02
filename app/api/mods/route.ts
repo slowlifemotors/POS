@@ -1,222 +1,147 @@
-// app/api/mods/route.ts
+// app/api/admin/mods/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/lib/supabaseServer";
 import { getSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-function getSupabaseAdmin() {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
-    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY");
-  }
-
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
-    auth: { persistSession: false },
-  });
-}
-
-function normalizeKey(input: unknown) {
-  const raw = typeof input === "string" ? input.trim() : "";
-  return raw.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-}
+type PricingType = "percentage" | "flat";
 
 function isAdminOrOwner(role: unknown) {
-  const r = typeof role === "string" ? role.toLowerCase() : "";
+  const r = typeof role === "string" ? role.toLowerCase().trim() : "";
   return r === "admin" || r === "owner";
 }
 
-async function requireAdminOrOwner() {
+async function requireAdminOrOwner(req: Request) {
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  (globalThis as any).__session_cookie_header = cookieHeader;
+
   const session = await getSession();
-  if (!session?.staff)
+  if (!session?.staff) {
     return {
       ok: false as const,
       res: NextResponse.json({ error: "Not authenticated" }, { status: 401 }),
     };
+  }
 
-  if (!isAdminOrOwner(session.staff.role))
+  if (!isAdminOrOwner(session.staff.role)) {
     return {
       ok: false as const,
       res: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
     };
+  }
 
   return { ok: true as const, session };
 }
 
-function parsePricing(body: any) {
-  const pricing_type =
-    body?.pricing_type === "flat" || body?.pricing_type === "percent"
-      ? body.pricing_type
-      : "percent";
-
-  const percent = Number(body?.percent ?? 0);
-  const flat_price =
-    body?.flat_price === null || body?.flat_price === undefined || body?.flat_price === ""
-      ? null
-      : Number(body.flat_price);
-
-  if (pricing_type === "percent") {
-    if (!Number.isFinite(percent) || percent < 0) {
-      return { ok: false as const, error: "Percent must be a valid number (>= 0)." };
-    }
-    return { ok: true as const, pricing_type, percent, flat_price: null as number | null };
-  }
-
-  // flat
-  if (flat_price === null || !Number.isFinite(flat_price) || flat_price < 0) {
-    return { ok: false as const, error: "Flat price must be a valid number (>= 0)." };
-  }
-
-  // percent can remain stored but isn't used when flat; keep it as 0 to avoid confusion
-  return { ok: true as const, pricing_type, percent: 0, flat_price };
+function parseUuid(val: any) {
+  const s = typeof val === "string" ? val.trim() : "";
+  return s || null;
 }
 
-export async function GET() {
-  try {
-    const supabase = getSupabaseAdmin();
+function parsePricing(input: any, is_menu: boolean) {
+  if (is_menu) {
+    return { ok: true as const, pricing_type: null, pricing_value: null };
+  }
 
-    const { data, error } = await supabase
-      .from("vehicle_mods")
-      .select(
-        "id, key, label, pricing_type, percent, flat_price, section, sort_order, active, created_at, updated_at"
-      )
-      .order("sort_order", { ascending: true })
-      .order("label", { ascending: true });
+  const pricing_type: PricingType | null =
+    input?.pricing_type === "percentage" || input?.pricing_type === "flat"
+      ? input.pricing_type
+      : null;
+
+  const pricing_value_raw = input?.pricing_value;
+
+  if (pricing_type === null) {
+    // allow "no pricing set yet"
+    if (pricing_value_raw === null || pricing_value_raw === undefined || pricing_value_raw === "") {
+      return { ok: true as const, pricing_type: null, pricing_value: null };
+    }
+    // pricing_value without pricing_type is invalid
+    return { ok: false as const, error: "pricing_type is required when pricing_value is provided." };
+  }
+
+  const pricing_value = Number(pricing_value_raw);
+
+  if (!Number.isFinite(pricing_value) || pricing_value < 0) {
+    return { ok: false as const, error: "pricing_value must be a valid number (>= 0)." };
+  }
+
+  if (pricing_type === "percentage" && pricing_value > 100) {
+    return { ok: false as const, error: "percentage pricing_value must be <= 100." };
+  }
+
+  return { ok: true as const, pricing_type, pricing_value };
+}
+
+export async function GET(req: Request) {
+  const gate = await requireAdminOrOwner(req);
+  if (!gate.ok) return gate.res;
+
+  try {
+    const { data, error } = await supabaseServer
+      .from("mods")
+      .select("id, name, parent_id, display_order, is_menu, pricing_type, pricing_value, active, created_at, updated_at")
+      .order("parent_id", { ascending: true })
+      .order("display_order", { ascending: true })
+      .order("name", { ascending: true });
 
     if (error) {
-      console.error("GET /api/mods error:", error);
+      console.error("GET /api/admin/mods error:", error);
       return NextResponse.json({ mods: [] }, { status: 200 });
     }
 
     return NextResponse.json({ mods: data ?? [] }, { status: 200 });
   } catch (err) {
-    console.error("GET /api/mods fatal:", err);
+    console.error("GET /api/admin/mods fatal:", err);
     return NextResponse.json({ mods: [] }, { status: 200 });
   }
 }
 
 export async function POST(req: Request) {
-  const gate = await requireAdminOrOwner();
+  const gate = await requireAdminOrOwner(req);
   if (!gate.ok) return gate.res;
 
   try {
     const body = await req.json();
 
-    const key = normalizeKey(body.key);
-    const label = typeof body.label === "string" ? body.label.trim() : "";
-    const section =
-      typeof body.section === "string" && body.section.trim() ? body.section.trim() : null;
-    const sort_order = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0;
-    const active = typeof body.active === "boolean" ? body.active : true;
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
 
-    if (!key) return NextResponse.json({ error: "Key is required" }, { status: 400 });
-    if (!label) return NextResponse.json({ error: "Label is required" }, { status: 400 });
+    const parent_id = parseUuid(body?.parent_id);
+    const display_order = Number.isFinite(Number(body?.display_order)) ? Number(body.display_order) : 0;
+    const is_menu = Boolean(body?.is_menu);
+    const active = typeof body?.active === "boolean" ? body.active : true;
 
-    const pricing = parsePricing(body);
+    if (display_order < 0) {
+      return NextResponse.json({ error: "display_order must be >= 0" }, { status: 400 });
+    }
+
+    const pricing = parsePricing(body, is_menu);
     if (!pricing.ok) return NextResponse.json({ error: pricing.error }, { status: 400 });
 
-    const supabase = getSupabaseAdmin();
-
-    const { data, error } = await supabase
-      .from("vehicle_mods")
+    const { data, error } = await supabaseServer
+      .from("mods")
       .insert({
-        key,
-        label,
+        name,
+        parent_id,
+        display_order,
+        is_menu,
         pricing_type: pricing.pricing_type,
-        percent: pricing.percent,
-        flat_price: pricing.flat_price,
-        section,
-        sort_order,
+        pricing_value: pricing.pricing_value,
         active,
       })
       .select()
       .single();
 
     if (error) {
-      console.error("POST /api/mods error:", error);
-      return NextResponse.json({ error: "Failed to create mod" }, { status: 500 });
+      console.error("POST /api/admin/mods error:", error);
+      // unique sibling name constraint will show here
+      return NextResponse.json({ error: "Failed to create mod/menu" }, { status: 500 });
     }
 
     return NextResponse.json({ mod: data }, { status: 200 });
   } catch (err) {
-    console.error("POST /api/mods fatal:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
-}
-
-export async function PUT(req: Request) {
-  const gate = await requireAdminOrOwner();
-  if (!gate.ok) return gate.res;
-
-  try {
-    const body = await req.json();
-
-    const id = Number(body.id);
-    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
-
-    const key = normalizeKey(body.key);
-    const label = typeof body.label === "string" ? body.label.trim() : "";
-    const section =
-      typeof body.section === "string" && body.section.trim() ? body.section.trim() : null;
-    const sort_order = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0;
-    const active = typeof body.active === "boolean" ? body.active : true;
-
-    if (!key) return NextResponse.json({ error: "Key is required" }, { status: 400 });
-    if (!label) return NextResponse.json({ error: "Label is required" }, { status: 400 });
-
-    const pricing = parsePricing(body);
-    if (!pricing.ok) return NextResponse.json({ error: pricing.error }, { status: 400 });
-
-    const supabase = getSupabaseAdmin();
-
-    const { data, error } = await supabase
-      .from("vehicle_mods")
-      .update({
-        key,
-        label,
-        pricing_type: pricing.pricing_type,
-        percent: pricing.percent,
-        flat_price: pricing.flat_price,
-        section,
-        sort_order,
-        active,
-      })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error("PUT /api/mods error:", error);
-      return NextResponse.json({ error: "Failed to update mod" }, { status: 500 });
-    }
-
-    return NextResponse.json({ mod: data }, { status: 200 });
-  } catch (err) {
-    console.error("PUT /api/mods fatal:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
-}
-
-export async function DELETE(req: Request) {
-  const gate = await requireAdminOrOwner();
-  if (!gate.ok) return gate.res;
-
-  try {
-    const body = await req.json().catch(() => ({}));
-    const id = Number(body.id);
-    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
-
-    const supabase = getSupabaseAdmin();
-
-    const { error } = await supabase.from("vehicle_mods").delete().eq("id", id);
-
-    if (error) {
-      console.error("DELETE /api/mods error:", error);
-      return NextResponse.json({ error: "Failed to delete mod" }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true }, { status: 200 });
-  } catch (err) {
-    console.error("DELETE /api/mods fatal:", err);
+    console.error("POST /api/admin/mods fatal:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

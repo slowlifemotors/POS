@@ -25,7 +25,7 @@ export default function POSClient({
         <POSItems
           vehicles={pos.filteredVehicles}
           selectedVehicle={pos.selectedVehicle}
-          mods={pos.mods}
+          modsRoot={pos.modsRoot}
           searchTerm={pos.searchTerm}
           setSearchTerm={pos.setSearchTerm}
           onSelectVehicle={pos.selectVehicle}
@@ -64,7 +64,7 @@ export default function POSClient({
           disabled={pos.cart.length === 0 || !pos.selectedVehicle}
           className="mt-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white py-3 rounded-lg shadow-lg font-semibold"
         >
-          Checkout
+          Create Job
         </button>
 
         {!pos.selectedVehicle && (
@@ -95,10 +95,7 @@ export default function POSClient({
       {pos.isCheckoutOpen && (
         <POSCheckoutModal
           finalTotal={pos.finalTotal}
-          paymentMethod={pos.paymentMethod}
-          setPaymentMethod={pos.setPaymentMethod}
-          tabs={pos.tabs}
-          onConfirm={pos.completeSale}
+          onConfirm={(note) => pos.createOrder(note)}
           onClose={() => pos.setIsCheckoutOpen(false)}
         />
       )}

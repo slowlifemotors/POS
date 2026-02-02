@@ -80,8 +80,10 @@ export default function NavBar({
         items: [
           { label: "Vehicles", href: "/items" },
 
-          // ✅ New: Mods / Items (Admin + Owner ONLY)
           ...(canManageMods ? [{ label: "Mods / Items", href: "/mods" }] : []),
+
+          // ✅ New: Jobs
+          { label: "Jobs", href: "/jobs" },
 
           { label: "Live Staff", href: "/live" },
           { label: "Sales Log", href: "/sales" },
@@ -93,6 +95,7 @@ export default function NavBar({
         activeMatch: [
           "/items",
           "/mods",
+          "/jobs",
           "/live",
           "/sales",
           "/settings/commission",
@@ -108,9 +111,8 @@ export default function NavBar({
     matches?.some((m) => pathname.startsWith(m)) ?? false;
 
   return (
-    <nav className="fixed top-0 left-0 w-full bg-slate-900 border-b border-slate-800 shadow-md z-[1000] isolate">
+    <nav className="fixed top-0 left-0 w-full bg-slate-900 border-b border-slate-800 shadow-md z-1000 isolate">
       <div className="flex items-center justify-between px-6 py-3">
-        {/* LOGO + BUSINESS NAME */}
         <div className="flex items-center gap-3 min-w-[260px]">
           <div
             style={{ width: logoWidth, height: logoHeight }}
@@ -129,7 +131,6 @@ export default function NavBar({
           <h1 className="text-xl font-bold">{businessName}</h1>
         </div>
 
-        {/* NAV */}
         <div className="flex items-center gap-2">
           {navItems.map((item) => {
             if (item.hide) return null;
@@ -150,8 +151,7 @@ export default function NavBar({
                     {item.label} ▾
                   </button>
 
-                  {/* Dropdown */}
-                  <div className="absolute left-0 top-full pt-2 hidden group-hover:block z-[1100]">
+                  <div className="absolute left-0 top-full pt-2 hidden group-hover:block z-1100">
                     <div className="w-52 bg-slate-800 border border-slate-700 rounded-md shadow-lg py-2">
                       {item.items.map((sub) => (
                         <Link
@@ -188,7 +188,6 @@ export default function NavBar({
           })}
         </div>
 
-        {/* USER / LOG OUT */}
         <div className="flex items-center gap-4 text-sm min-w-[220px] justify-end">
           <div className="text-right leading-tight">
             <p className="text-slate-400">Name</p>

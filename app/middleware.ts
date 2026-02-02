@@ -1,3 +1,4 @@
+// middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -42,11 +43,13 @@ export const config = {
     "/login",
     "/pos/:path*",
     "/items/:path*",
+    "/mods/:path*",
+    "/jobs/:path*",
     "/customers/:path*",
     "/reports/:path*",
     "/categories/:path*",
     "/staff/:path*",
     "/settings/:path*",
-    "/api/:path*", // ensure API is matched but passed through
+    "/api/:path*",
   ],
 };

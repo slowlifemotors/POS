@@ -230,7 +230,7 @@ const selectCustomer = async (customer: Customer) => {
 
           <button
             onClick={saveNewCustomer}
-            className="w-full bg-[color:var(--accent)] hover:[color:var(--accent-hover)] text-white py-2 rounded mb-2"
+            className="w-full bg-(--accent) hover:(--accent-hover) text-white py-2 rounded mb-2"
           >
             Save Customer
           </button>
