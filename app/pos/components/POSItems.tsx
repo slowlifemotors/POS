@@ -34,23 +34,35 @@ function roundToCents(n: number) {
  * - percentage value is COST (% of base price)
  * - sale price = cost * 2 (100% markup)
  * - flat value is already the SALE price
+ *
+ * UI RULE:
+ * - Always show FINAL SALE PRICE ONLY
+ * - Never show percentage in UI
  */
 function computePriceLabel(
   pricing_type: ModPricingType | null,
   pricing_value: number | null,
   vehicleBasePrice: number
 ) {
-  if (!pricing_type || pricing_value == null) return { text: "No price", computed: null };
+  if (!pricing_type || pricing_value == null) {
+    return { text: "No price", computed: null };
+  }
 
   if (pricing_type === "percentage") {
     const pct = Number(pricing_value);
     const cost = roundToCents((vehicleBasePrice * pct) / 100);
     const sale = roundToCents(cost * 2);
-    return { text: `${pct.toFixed(2)}% ($${sale.toFixed(2)})`, computed: sale };
+    return {
+      text: `$${sale.toLocaleString()}`,
+      computed: sale,
+    };
   }
 
   const sale = roundToCents(Number(pricing_value));
-  return { text: `$${sale.toLocaleString()}`, computed: sale };
+  return {
+    text: `$${sale.toLocaleString()}`,
+    computed: sale,
+  };
 }
 
 export default function POSItems({
@@ -65,7 +77,7 @@ export default function POSItems({
 }: POSItemsProps) {
   const safeVehicles: Vehicle[] = Array.isArray(vehicles) ? vehicles : [];
 
-  // Collapsible menus: id -> open (default true)
+  // Collapsible menus: id -> open (default varies by depth)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 
   const rootChildren = useMemo(() => {
@@ -74,11 +86,20 @@ export default function POSItems({
   }, [modsRoot]);
 
   const toggleMenu = (id: string) => {
-    setOpenMap((prev) => ({ ...prev, [id]: !(prev[id] !== false) }));
+    setOpenMap((prev) => {
+      const current =
+        prev[id] !== undefined
+          ? prev[id]
+          : false; // if never set, toggling should open it
+      return { ...prev, [id]: !current };
+    });
   };
 
   const renderNode = (node: ModNode, depth: number) => {
-    const isOpen = openMap[node.id] !== false; // default open
+    // Top-level menus closed by default, nested open
+    const isOpen =
+      openMap[node.id] !== undefined ? openMap[node.id] : depth > 0;
+
     const indentClass = depth === 0 ? "" : depth === 1 ? "ml-4" : "ml-8";
 
     if (node.is_menu) {
@@ -95,7 +116,9 @@ export default function POSItems({
 
           {isOpen && (
             <div className="mt-2 space-y-2">
-              {(node.children ?? []).map((child) => renderNode(child, depth + 1))}
+              {(node.children ?? []).map((child) =>
+                renderNode(child, depth + 1)
+              )}
             </div>
           )}
         </div>
@@ -104,7 +127,11 @@ export default function POSItems({
 
     // Leaf mod button
     const base = selectedVehicle?.base_price ?? 0;
-    const priceInfo = computePriceLabel(node.pricing_type, node.pricing_value, base);
+    const priceInfo = computePriceLabel(
+      node.pricing_type,
+      node.pricing_value,
+      base
+    );
     const disabled = !selectedVehicle || priceInfo.computed == null;
 
     return (
@@ -122,8 +149,8 @@ export default function POSItems({
           !selectedVehicle
             ? "Select a vehicle first"
             : priceInfo.computed == null
-              ? `No pricing set for "${node.name}" (set in /mods)`
-              : "Add to cart"
+            ? `No pricing set for "${node.name}" (set in /mods)`
+            : "Add to cart"
         }
       >
         <span className="text-slate-100">{node.name}</span>
@@ -175,7 +202,7 @@ export default function POSItems({
           )}
         </div>
 
-        {/* MOD MENUS (only after selecting vehicle) */}
+        {/* MOD MENUS */}
         {selectedVehicle && (
           <div className="mt-4 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4">
             {!modsRoot && (
@@ -189,10 +216,6 @@ export default function POSItems({
                 {rootChildren.map((top) => renderNode(top, 0))}
               </div>
             )}
-
-            <p className="mt-3 text-xs text-slate-400">
-              * Percentage mods: % is COST basis; sale price includes 100% markup.
-            </p>
           </div>
         )}
       </div>
