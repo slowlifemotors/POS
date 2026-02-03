@@ -31,6 +31,9 @@ function vehicleName(v: Vehicle) {
  * - sale price = cost * 2 (100% markup)
  * - flat value is already the SALE price
  * - rounded to nearest dollar
+ *
+ * UI RULE:
+ * - Keep price, but DO NOT show the percentage
  */
 function computePriceLabel(
   pricing_type: ModPricingType | null,
@@ -60,12 +63,17 @@ function computePriceLabel(
 }
 
 /**
- * MENU DEFAULTS (TOP-LEVEL)
+ * MENU DEFAULTS (by menu name)
  * - All dropdowns open by default EXCEPT Cosmetics.
+ *
+ * Keys are normalized (lowercase, trimmed).
+ * This applies regardless of nesting depth (so Cosmetics stays closed even under "Mods").
  */
-const TOP_LEVEL_MENU_DEFAULT_OPEN: Record<string, boolean> = {
+const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
   cosmetics: false,
   upgrades: true,
+  mods: true,
+  "frequently used": true,
 };
 
 function normalizeMenuKey(name: unknown) {
@@ -84,6 +92,7 @@ export default function POSItems({
 }: POSItemsProps) {
   const safeVehicles: Vehicle[] = Array.isArray(vehicles) ? vehicles : [];
 
+  // Collapsible menus: id -> open (only stores user toggles; defaults come from config)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 
   const rootChildren = useMemo(() => {
@@ -98,23 +107,30 @@ export default function POSItems({
     });
   };
 
+  const defaultMenuOpen = (node: ModNode, depth: number) => {
+    const key = normalizeMenuKey(node.name);
+    if (key && Object.prototype.hasOwnProperty.call(MENU_DEFAULT_OPEN_BY_NAME, key)) {
+      return MENU_DEFAULT_OPEN_BY_NAME[key];
+    }
+
+    // Default behavior: open everything unless explicitly configured above.
+    // (Depth is intentionally not used to force Cosmetics closed even when nested.)
+    return true;
+  };
+
   const renderNode = (node: ModNode, depth: number) => {
     const indentClass = depth === 0 ? "" : depth === 1 ? "ml-4" : "ml-8";
 
     if (node.is_menu) {
-      const defaultOpen =
-        depth === 0
-          ? TOP_LEVEL_MENU_DEFAULT_OPEN[normalizeMenuKey(node.name)] ?? true
-          : true;
-
-      const isOpen = openMap[node.id] !== undefined ? openMap[node.id] : defaultOpen;
+      const fallback = defaultMenuOpen(node, depth);
+      const isOpen = openMap[node.id] !== undefined ? openMap[node.id] : fallback;
 
       return (
         <div key={node.id} className={`${indentClass} mt-2`}>
           <button
             type="button"
             onClick={() => toggleMenu(node.id, isOpen)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 transition"
+            className="w-full flex items-center justify-between px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 transition"
           >
             <span className="font-semibold text-slate-50">{node.name}</span>
             <span className="text-slate-300">{isOpen ? "▾" : "▸"}</span>
@@ -129,6 +145,7 @@ export default function POSItems({
       );
     }
 
+    // Leaf mod button
     const base = selectedVehicle?.base_price ?? 0;
     const priceInfo = computePriceLabel(node.pricing_type, node.pricing_value, base);
     const disabled = !selectedVehicle || priceInfo.computed == null;
@@ -139,14 +156,23 @@ export default function POSItems({
         type="button"
         disabled={disabled}
         onClick={() => onAddMod(node.id)}
-        className={`${indentClass} w-full text-left px-3 py-2 rounded-lg border text-sm font-medium transition flex items-center justify-between ${
+        className={`${indentClass} w-full text-left px-4 py-2 rounded-lg border text-sm font-medium transition flex items-center justify-between ${
           disabled
             ? "bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
             : "bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
         }`}
+        title={
+          !selectedVehicle
+            ? "Select a vehicle first"
+            : priceInfo.computed == null
+              ? `No pricing set for "${node.name}" (set in /mods)`
+              : "Add to cart"
+        }
       >
         <span className="text-slate-100">{node.name}</span>
-        <span className="text-xs text-slate-400">{priceInfo.text}</span>
+
+        {/* More right padding (via px-4) pulls this in; tabular nums look cleaner */}
+        <span className="text-xs text-slate-400 tabular-nums">{priceInfo.text}</span>
       </button>
     );
   };
@@ -162,7 +188,7 @@ export default function POSItems({
         onChange={(e) => setSearchTerm(e.target.value)}
       />
 
-      {/* Selected Vehicle */}
+      {/* Selected Vehicle + Mod Menus */}
       <div className="mb-6">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -205,16 +231,14 @@ export default function POSItems({
               )}
 
               {modsRoot && (
-                <div className="space-y-3">
-                  {rootChildren.map((top) => renderNode(top, 0))}
-                </div>
+                <div className="space-y-3">{rootChildren.map((top) => renderNode(top, 0))}</div>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Vehicles grid (unchanged, full width) */}
+      {/* Vehicles grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {safeVehicles.map((v) => {
           const isSelected = selectedVehicle?.id === v.id;
@@ -230,13 +254,17 @@ export default function POSItems({
               }`}
             >
               <div className="p-4">
-                <h2 className="font-semibold text-lg text-slate-50">
-                  {vehicleName(v)}
-                </h2>
+                <h2 className="font-semibold text-lg text-slate-50">{vehicleName(v)}</h2>
 
-                <p className="text-slate-400 text-sm">
-                  {v.category ?? "Uncategorized"}
-                </p>
+                <p className="text-slate-400 text-sm">{v.category ?? "Uncategorized"}</p>
+
+                {(v.stock_class || v.maxed_class) && (
+                  <p className="text-slate-400 text-xs mt-1">
+                    {v.stock_class ? `Stock: ${v.stock_class}` : ""}
+                    {v.stock_class && v.maxed_class ? " • " : ""}
+                    {v.maxed_class ? `Maxed: ${v.maxed_class}` : ""}
+                  </p>
+                )}
 
                 <p className="mt-2 text-xl font-bold text-slate-50">
                   ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
@@ -247,9 +275,7 @@ export default function POSItems({
         })}
 
         {safeVehicles.length === 0 && (
-          <p className="text-slate-500 col-span-full text-center mt-10">
-            No vehicles found.
-          </p>
+          <p className="text-slate-500 col-span-full text-center mt-10">No vehicles found.</p>
         )}
       </div>
     </div>
