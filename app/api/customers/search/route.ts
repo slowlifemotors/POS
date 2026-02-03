@@ -8,104 +8,108 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
+type CustomerRow = {
+  id: number;
+  name: string;
+  phone: string | null;
+  discount_id: number | null;
+  is_blacklisted: boolean;
+  blacklist_reason: string | null;
+  blacklist_start: string | null;
+  blacklist_end: string | null;
+};
+
+type StaffRow = {
+  id: number;
+  name: string;
+  username: string | null;
+  active: boolean | null;
+};
+
+function normName(v: unknown) {
+  return String(v ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const q = (searchParams.get("q") || "").trim();
+    if (!q) return NextResponse.json({ results: [] });
 
-    if (!q) {
-      return NextResponse.json({ customers: [] });
-    }
-
-    // ----------------------------------------------------
-    // 1. Search discounts by name or percent
-    // ----------------------------------------------------
-    const { data: discountMatches, error: discErr } = await supabase
-      .from("discounts")
-      .select("id, name, percent")
-      .or(`name.ilike.%${q}%, percent::text.ilike.%${q}%`);
-
-    if (discErr) console.error("Discount search error:", discErr);
-
-    const discountIds = Array.isArray(discountMatches)
-      ? discountMatches.map((d) => d.id)
-      : [];
-
-    // ----------------------------------------------------
-    // 2. Search customers by name/phone
-    //    (INCLUDES BLACKLIST FIELDS NOW)
-    // ----------------------------------------------------
-    const { data: basicMatchesRaw, error: custErr1 } = await supabase
+    // 1) Customers (name/phone)
+    const { data: customersRaw, error: custErr } = await supabase
       .from("customers")
-      .select(`
+      .select(
+        `
         id,
         name,
         phone,
-        email,
         discount_id,
         is_blacklisted,
         blacklist_reason,
         blacklist_start,
         blacklist_end
-      `)
-      .or(`name.ilike.%${q}%, phone.ilike.%${q}%`)
+      `
+      )
+      .or(`name.ilike.%${q}%,phone.ilike.%${q}%`)
       .order("name");
 
-    if (custErr1) console.error("Customer basic search error:", custErr1);
+    if (custErr) console.error("Customer search error:", custErr);
 
-    const basicMatches = Array.isArray(basicMatchesRaw)
-      ? basicMatchesRaw
-      : [];
+    const customers = (Array.isArray(customersRaw) ? customersRaw : []) as CustomerRow[];
 
-    // ----------------------------------------------------
-    // 3. Search customers by discounts
-    // ----------------------------------------------------
-    let discountCustomerMatches: any[] = [];
+    // 2) Staff (name/username)
+    const { data: staffRaw, error: staffErr } = await supabase
+      .from("staff")
+      .select(`id, name, username, active`)
+      .or(`name.ilike.%${q}%,username.ilike.%${q}%`)
+      .order("name");
 
-    if (discountIds.length > 0) {
-      const { data, error } = await supabase
-        .from("customers")
-        .select(`
-          id,
-          name,
-          phone,
-          email,
-          discount_id,
-          is_blacklisted,
-          blacklist_reason,
-          blacklist_start,
-          blacklist_end
-        `)
-        .in("discount_id", discountIds);
+    if (staffErr) console.error("Staff search error:", staffErr);
 
-      if (error) {
-        console.error("Customer discount search error:", error);
-      }
+    const staff = (Array.isArray(staffRaw) ? staffRaw : []) as StaffRow[];
 
-      discountCustomerMatches = Array.isArray(data) ? data : [];
-    }
+    // 3) If a person is in BOTH staff + customers, show ONLY the staff entry
+    const staffNameSet = new Set(staff.map((s) => normName(s.name)));
 
-    // ----------------------------------------------------
-    // 4. Merge results (unique by customer.id)
-    // ----------------------------------------------------
-    const safeBasic = Array.isArray(basicMatches) ? basicMatches : [];
-    const safeDiscount = Array.isArray(discountCustomerMatches)
-      ? discountCustomerMatches
-      : [];
+    const customersFiltered = customers.filter((c) => {
+      const n = normName(c.name);
+      return !staffNameSet.has(n);
+    });
 
-    const seen = new Set();
-    const merged: any[] = [];
+    // 4) Merge
+    const results = [
+      ...customersFiltered.map((c) => ({
+        type: "customer" as const,
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        discount_id: c.discount_id,
+        is_blacklisted: c.is_blacklisted ?? false,
+        blacklist_reason: c.blacklist_reason ?? null,
+        blacklist_start: c.blacklist_start ?? null,
+        blacklist_end: c.blacklist_end ?? null,
+      })),
+      ...staff.map((s) => ({
+        type: "staff" as const,
+        id: s.id,
+        name: s.name,
+        phone: null,
+        discount_id: null,
+        is_blacklisted: false,
+        blacklist_reason: null,
+        blacklist_start: null,
+        blacklist_end: null,
+        username: s.username ?? null,
+      })),
+    ];
 
-    for (const c of [...safeBasic, ...safeDiscount]) {
-      if (!seen.has(c.id)) {
-        seen.add(c.id);
-        merged.push(c);
-      }
-    }
-
-    return NextResponse.json({ customers: merged });
+    return NextResponse.json({ results });
   } catch (err) {
     console.error("Search route error:", err);
-    return NextResponse.json({ customers: [] });
+    return NextResponse.json({ results: [] });
   }
 }

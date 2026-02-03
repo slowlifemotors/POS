@@ -48,7 +48,7 @@ export default function BlacklistModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-[420px] text-slate-100 shadow-xl">
+      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-105 text-slate-100 shadow-xl">
         <h2 className="text-2xl font-bold mb-4 text-red-400">
           Blacklist {customer.name}
         </h2>

@@ -12,7 +12,7 @@ type IncomingLine = {
   mod_id: string;
   mod_name: string;
   quantity: number;
-  computed_price: number; // unit price
+  computed_price: number; // unit price (sale price)
   pricing_type: PricingType;
   pricing_value: number;
 };
@@ -35,6 +35,10 @@ function isManagerOrAbove(role: unknown) {
   return r === "owner" || r === "admin" || r === "manager";
 }
 
+function roundToCents(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
 async function requireSession(req: Request) {
   const cookieHeader = req.headers.get("cookie") ?? "";
   (globalThis as any).__session_cookie_header = cookieHeader;
@@ -44,7 +48,7 @@ async function requireSession(req: Request) {
 }
 
 /**
- * GET /api/orders?status=paid|void|all
+ * GET /api/orders?status=paid|voided|all
  * Lists recent orders (Jobs history) — manager+ only
  */
 export async function GET(req: Request) {
@@ -64,13 +68,13 @@ export async function GET(req: Request) {
     let query = supabaseServer
       .from("orders")
       .select(
-        "id, status, vehicle_id, staff_id, customer_id, discount_id, subtotal, discount_amount, total, note, created_at, updated_at"
+        "id, status, vehicle_id, staff_id, customer_id, discount_id, subtotal, discount_amount, total, note, created_at, updated_at, voided_at, void_reason, voided_by_staff_id"
       )
       .order("created_at", { ascending: false })
       .limit(200);
 
     if (status !== "all") {
-      if (status !== "paid" && status !== "void") {
+      if (status !== "paid" && status !== "voided") {
         return NextResponse.json({ error: "Invalid status" }, { status: 400 });
       }
       query = query.eq("status", status);
@@ -93,6 +97,11 @@ export async function GET(req: Request) {
 /**
  * POST /api/orders
  * Card-only POS flow: creates a new PAID order immediately
+ *
+ * IMPORTANT:
+ * - Server recalculates subtotal/discount/total to satisfy DB constraint.
+ * - total is ALWAYS CEILING(subtotal - discount_amount).
+ * - if customer_is_staff === true, discount is forced OFF (discount_id null, discount_amount 0).
  */
 export async function POST(req: Request) {
   const session = await requireSession(req);
@@ -116,10 +125,9 @@ export async function POST(req: Request) {
         ? null
         : toNumber(body.discount_id);
 
+    const customer_is_staff = Boolean(body?.customer_is_staff);
+
     const vehicle_base_price = toNumber(body?.vehicle_base_price);
-    const subtotal = toNumber(body?.subtotal);
-    const discount_amount = toNumber(body?.discount_amount);
-    const total = toNumber(body?.total);
 
     const note =
       typeof body?.note === "string" && body.note.trim() ? body.note.trim() : null;
@@ -191,7 +199,45 @@ export async function POST(req: Request) {
       }
     }
 
+    // -------------------------
+    // SERVER-TRUSTED TOTALS
+    // -------------------------
+    const computedSubtotal = roundToCents(
+      lines.reduce((sum, l) => {
+        const qty = toNumber(l.quantity);
+        const unit = toNumber(l.computed_price);
+        return sum + qty * unit;
+      }, 0)
+    );
+
+    let discountPercent = 0;
+    let finalDiscountId: number | null = discount_id;
+
+    // Enforce: staff sale means no discounts
+    if (customer_is_staff) {
+      finalDiscountId = null;
+    } else if (finalDiscountId) {
+      const { data: disc, error: discErr } = await supabaseServer
+        .from("discounts")
+        .select("percent")
+        .eq("id", finalDiscountId)
+        .maybeSingle();
+
+      if (discErr) {
+        console.error("POST /api/orders discount lookup error:", discErr);
+        return NextResponse.json({ error: "Failed to load discount" }, { status: 500 });
+      }
+
+      discountPercent = Number(disc?.percent ?? 0);
+    }
+
+    const computedDiscountAmount = roundToCents((computedSubtotal * discountPercent) / 100);
+    const computedRawTotal = roundToCents(computedSubtotal - computedDiscountAmount);
+    const computedTotal = Math.ceil(computedRawTotal);
+
+    // -------------------------
     // Create order (PAID)
+    // -------------------------
     const { data: order, error: orderErr } = await supabaseServer
       .from("orders")
       .insert({
@@ -199,11 +245,14 @@ export async function POST(req: Request) {
         vehicle_id,
         staff_id,
         customer_id,
-        discount_id,
+        discount_id: finalDiscountId,
+        customer_is_staff,
         vehicle_base_price,
-        subtotal,
-        discount_amount,
-        total,
+
+        subtotal: computedSubtotal,
+        discount_amount: computedDiscountAmount,
+        total: computedTotal,
+
         note,
       })
       .select("id")
@@ -223,7 +272,10 @@ export async function POST(req: Request) {
       mod_id: toUuid(l.mod_id),
       mod_name: String(l.mod_name ?? "").trim(),
       quantity: toNumber(l.quantity, 1),
+
+      // store as unit_price in DB
       unit_price: toNumber(l.computed_price),
+
       pricing_type: l.pricing_type,
       pricing_value: toNumber(l.pricing_value),
     }));

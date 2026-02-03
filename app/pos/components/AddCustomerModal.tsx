@@ -1,36 +1,40 @@
 // app/pos/components/AddCustomerModal.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { Customer, Discount } from "../hooks/usePOS";
 
-type Customer = {
-  id: number;
-  name: string;
-  phone: string | null;
-  email: string | null;
-  discount_id: number | null;
+type SearchResult =
+  | ({
+      type: "customer";
+    } & Customer)
+  | ({
+      type: "staff";
+      username?: string | null;
+      // staff results are not real customers yet
+      discount_id: null;
+      is_blacklisted: false;
+      blacklist_reason: null;
+      blacklist_start: null;
+      blacklist_end: null;
+      phone: string | null;
+    } & Pick<Customer, "id" | "name" | "phone">);
 
-  is_blacklisted: boolean;
-  blacklist_reason: string | null;
-  blacklist_start: string | null;
-  blacklist_end: string | null;
-};
-
-type Discount = {
-  id: number;
-  name: string;
-  percent: number;
-};
+export type SelectedCustomerType = "customer" | "staff";
 
 export default function AddCustomerModal({
   onClose,
   onSelectCustomer,
 }: {
   onClose: () => void;
-  onSelectCustomer: (customer: Customer, discount: Discount | null) => void;
+  onSelectCustomer: (
+    customer: Customer,
+    discount: Discount | null,
+    customerType: SelectedCustomerType
+  ) => void;
 }) {
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<Customer[]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
 
   const [newName, setNewName] = useState("");
@@ -42,9 +46,9 @@ export default function AddCustomerModal({
   // Load all discounts
   // ---------------------------------------------
   const loadDiscounts = async () => {
-    const res = await fetch("/api/discounts");
-    const json = await res.json();
-    setDiscounts(json.discounts || []);
+    const res = await fetch("/api/discounts", { cache: "no-store" });
+    const json = await res.json().catch(() => ({}));
+    setDiscounts(Array.isArray(json.discounts) ? json.discounts : []);
   };
 
   useEffect(() => {
@@ -52,39 +56,28 @@ export default function AddCustomerModal({
   }, []);
 
   // ---------------------------------------------
-  // Search Customers (returns blacklist fields now)
+  // Search Customers + Staff (via unified API)
   // ---------------------------------------------
-  const searchCustomers = async () => {
-    const term = search.trim();
-    if (!term) {
+  const searchPeople = async () => {
+    if (!search.trim()) {
       setResults([]);
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/customers/search?q=${encodeURIComponent(term)}`
-      );
-
+      const res = await fetch(`/api/customers/search?q=${encodeURIComponent(search)}`, {
+        cache: "no-store",
+      });
       const json = await res.json().catch(() => ({}));
-
-      // ✅ SUPPORT BOTH SHAPES:
-      // - new: { results: [...] }
-      // - old: { customers: [...] }
-      const rows = (json.results ?? json.customers ?? []) as Customer[];
-
-      setResults(Array.isArray(rows) ? rows : []);
-    } catch (err) {
-      console.error("POS customer search failed:", err);
-      setResults([]);
+      setResults(Array.isArray(json.results) ? json.results : []);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    const delay = setTimeout(() => searchCustomers(), 300);
+    const delay = setTimeout(() => searchPeople(), 300);
     return () => clearTimeout(delay);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
@@ -93,75 +86,76 @@ export default function AddCustomerModal({
   // Load specific discount
   // ---------------------------------------------
   const loadDiscount = async (discountId: number): Promise<Discount | null> => {
-    const res = await fetch(`/api/discounts?id=${discountId}`);
-    const json = await res.json();
-    return json.discount || null;
-  };
-
-  // ---------------------------------------------------
-  // Select existing customer
-  // ---------------------------------------------------
-  const selectCustomer = async (customer: Customer) => {
-    let discount: Discount | null = null;
-
-    if (customer.discount_id) {
-      discount = await loadDiscount(customer.discount_id);
-    }
-
-    onSelectCustomer(
-      {
-        id: customer.id,
-        name: customer.name,
-        phone: customer.phone,
-        email: customer.email ?? null,
-        discount_id: customer.discount_id,
-
-        is_blacklisted: customer.is_blacklisted ?? false,
-        blacklist_reason: customer.blacklist_reason ?? null,
-        blacklist_start: customer.blacklist_start ?? null,
-        blacklist_end: customer.blacklist_end ?? null,
-      },
-      discount
-    );
-
-    onClose();
+    const res = await fetch(`/api/discounts?id=${discountId}`, { cache: "no-store" });
+    const json = await res.json().catch(() => ({}));
+    return (json.discount as Discount) || null;
   };
 
   // ---------------------------------------------
-  // Create new customer WITH blacklist fields defaulted
+  // Create customer helper (used for staff clicks too)
   // ---------------------------------------------
-  const saveNewCustomer = async () => {
-    if (!newName.trim()) return;
-
+  const createCustomer = async (name: string, phone: string | null, discountId: number | null) => {
     const res = await fetch("/api/customers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: newName.trim(),
-        phone: newPhone.trim() || null,
-        discount_id: newDiscountId || null,
+        name: name.trim(),
+        phone: phone?.trim() || null,
+        discount_id: discountId ?? null,
       }),
     });
 
-    const json = await res.json();
-    if (!res.ok) return;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to create customer.");
+    return json.customer as Customer;
+  };
 
-    const created: Customer = {
-      ...json.customer,
-      is_blacklisted: false,
-      blacklist_reason: null,
-      blacklist_start: null,
-      blacklist_end: null,
-    };
+  // ---------------------------------------------------
+  // Select existing customer OR staff
+  // ---------------------------------------------------
+  const selectResult = async (r: SearchResult) => {
+    // If it's already a customer, select normally
+    if (r.type === "customer") {
+      let discount: Discount | null = null;
+      if (r.discount_id) discount = await loadDiscount(r.discount_id);
 
-    let discountObj: Discount | null = null;
-
-    if (created.discount_id) {
-      discountObj = await loadDiscount(created.discount_id);
+      onSelectCustomer(r, discount, "customer");
+      onClose();
+      return;
     }
 
-    onSelectCustomer(created, discountObj);
-    onClose();
+    // If it's staff, create a customer on-the-fly then select it
+    try {
+      const created = await createCustomer(r.name, r.phone ?? null, null);
+
+      let discountObj: Discount | null = null;
+      if (created.discount_id) discountObj = await loadDiscount(created.discount_id);
+
+      // ✅ IMPORTANT: mark this selection as staff so commission can be forced to 0
+      onSelectCustomer(created, discountObj, "staff");
+      onClose();
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to select staff as customer.");
+    }
+  };
+
+  // ---------------------------------------------
+  // Create new customer (manual)
+  // ---------------------------------------------
+  const saveNewCustomer = async () => {
+    if (!newName.trim()) return;
+
+    try {
+      const created = await createCustomer(newName, newPhone || null, newDiscountId);
+
+      let discountObj: Discount | null = null;
+      if (created.discount_id) discountObj = await loadDiscount(created.discount_id);
+
+      onSelectCustomer(created, discountObj, "customer");
+      onClose();
+    } catch (e: any) {
+      alert(e?.message ?? "Failed to create customer.");
+    }
   };
 
   // ---------------------------------------------
@@ -187,19 +181,30 @@ export default function AddCustomerModal({
           <>
             {results.length > 0 && (
               <div className="max-h-40 overflow-y-auto mb-4 space-y-2">
-                {results.map((c) => (
+                {results.map((r) => (
                   <div
-                    key={c.id}
+                    key={`${r.type}-${r.id}`}
                     className="p-3 bg-slate-800 border border-slate-700 rounded cursor-pointer hover:bg-slate-700"
-                    onClick={() => selectCustomer(c)}
+                    onClick={() => selectResult(r)}
                   >
-                    <p className="font-semibold">{c.name}</p>
-                    {c.phone && <p className="text-slate-400">{c.phone}</p>}
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold">{r.name}</p>
 
-                    {c.is_blacklisted && (
-                      <p className="text-red-400 font-bold text-sm mt-1">
-                        ⚠ Blacklisted
-                      </p>
+                      {r.type === "staff" && (
+                        <span className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200">
+                          Staff
+                        </span>
+                      )}
+                    </div>
+
+                    {"phone" in r && r.phone && <p className="text-slate-400">{r.phone}</p>}
+
+                    {r.type === "staff" && r.username && (
+                      <p className="text-slate-400 text-xs">Username: {r.username}</p>
+                    )}
+
+                    {"is_blacklisted" in r && r.is_blacklisted && (
+                      <p className="text-red-400 font-bold text-sm mt-1">⚠ Blacklisted</p>
                     )}
                   </div>
                 ))}
@@ -229,9 +234,7 @@ export default function AddCustomerModal({
           <select
             className="w-full p-2 rounded bg-slate-800 border border-slate-700 mb-4 text-slate-100"
             value={newDiscountId || ""}
-            onChange={(e) =>
-              setNewDiscountId(e.target.value ? Number(e.target.value) : null)
-            }
+            onChange={(e) => setNewDiscountId(e.target.value ? Number(e.target.value) : null)}
           >
             <option value="">No Discount</option>
             {discounts.map((d) => (

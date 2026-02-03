@@ -50,7 +50,6 @@ export type Customer = {
   id: number;
   name: string;
   phone: string | null;
-  email: string | null;
   discount_id: number | null;
   is_blacklisted: boolean;
   blacklist_reason: string | null;
@@ -70,6 +69,8 @@ export type Tab = {
   amount: number;
   active: boolean;
 };
+
+export type SelectedCustomerType = "customer" | "staff" | null;
 
 type UsePOSArgs = {
   staffId: number;
@@ -136,10 +137,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+
+  // ✅ track whether selected person was staff (for discount / commission logic)
+  const [selectedCustomerType, setSelectedCustomerType] =
+    useState<SelectedCustomerType>(null);
+
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
-  // NEW: disable UI while "processing payment"
+  // disable UI while "processing payment"
   const [isPaying, setIsPaying] = useState(false);
 
   // -------------------------
@@ -333,15 +339,17 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   // -------------------------
   // TOTALS
   // RULE: POS final total is ALWAYS rounded UP to the next full dollar.
+  // If selectedCustomerType === "staff", discount is forced OFF.
   // -------------------------
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const discountPercent = discount ? discount.percent : 0;
-  const discountAmount = (subtotal * discountPercent) / 100;
 
-  // keep cents precision for internal math (optional), but final is CEIL dollars
+  const discountPercent =
+    selectedCustomerType === "staff" ? 0 : discount ? discount.percent : 0;
+
+  const discountAmount =
+    selectedCustomerType === "staff" ? 0 : (subtotal * discountPercent) / 100;
+
   const rawTotal = roundToCents(subtotal - discountAmount);
-
-  // ✅ FINAL TOTAL = round up to next full dollar
   const total = Math.ceil(rawTotal);
 
   // -------------------------
@@ -371,9 +379,21 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   // -------------------------
   // CUSTOMER SELECTION
   // -------------------------
-  const handleSelectCustomer = (customer: Customer, disc: Discount | null) => {
+  const handleSelectCustomer = (
+    customer: Customer,
+    disc: Discount | null,
+    customerType: SelectedCustomerType = "customer"
+  ) => {
     setSelectedCustomer(customer);
-    setDiscount(disc);
+    setSelectedCustomerType(customerType);
+
+    // ✅ staff sale: force discounts off
+    if (customerType === "staff") {
+      setDiscount(null);
+    } else {
+      setDiscount(disc);
+    }
+
     setShowCustomerModal(false);
   };
 
@@ -383,15 +403,25 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const refreshCustomer = async () => {
     if (!selectedCustomer) return;
 
-    const res = await fetch(`/api/customers?id=${selectedCustomer.id}`);
-    const json = await res.json();
+    const res = await fetch(`/api/customers?id=${selectedCustomer.id}`, {
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => ({}));
 
     if (json.customer) {
       setSelectedCustomer(json.customer);
 
+      // ✅ if currently staff-type, force discount off
+      if (selectedCustomerType === "staff") {
+        setDiscount(null);
+        return;
+      }
+
       if (json.customer.discount_id) {
-        const dres = await fetch(`/api/discounts?id=${json.customer.discount_id}`);
-        const djson = await dres.json();
+        const dres = await fetch(`/api/discounts?id=${json.customer.discount_id}`, {
+          cache: "no-store",
+        });
+        const djson = await dres.json().catch(() => ({}));
         setDiscount(djson.discount || null);
       } else {
         setDiscount(null);
@@ -427,15 +457,19 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         staff_id: staffId,
         vehicle_id: selectedVehicle.id,
         customer_id: selectedCustomer ? selectedCustomer.id : null,
-        discount_id: discount ? discount.id : null,
+
+        // ✅ enforce: if staff selected, discount_id must be null
+        discount_id:
+          selectedCustomerType === "staff" ? null : discount ? discount.id : null,
+
+        // ✅ Persist staff-sale intent for commission logic (and server validation)
+        customer_is_staff: selectedCustomerType === "staff",
 
         vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
 
-        // subtotal / discount stored as cents precision (fine)
+        // Client values are informational; server recalculates anyway
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount),
-
-        // ✅ total stored as WHOLE DOLLARS (already rounded up)
         total,
 
         note: note?.trim() || null,
@@ -445,7 +479,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
           mod_id: c.mod_id,
           mod_name: c.mod_name,
           quantity: c.quantity,
-          computed_price: c.computed_price, // unit SALE price
+          computed_price: c.computed_price,
           pricing_type: c.pricing_type,
           pricing_value: c.pricing_value,
         })),
@@ -468,6 +502,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       setCart([]);
       setIsCheckoutOpen(false);
       setSelectedCustomer(null);
+      setSelectedCustomerType(null);
       setDiscount(null);
       setSelectedVehicle(null);
 
@@ -487,10 +522,11 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     cart,
     searchTerm,
     selectedCustomer,
+    selectedCustomerType,
     discount,
     originalTotal: subtotal,
     discountAmount,
-    finalTotal: total, // ✅ now whole dollars (integer)
+    finalTotal: total,
     paymentMethod,
     isCheckoutOpen,
     showCustomerModal,

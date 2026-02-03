@@ -47,6 +47,7 @@ export default function POSClient({
           customer={pos.selectedCustomer}
           discount={pos.discount}
           isBlacklisted={pos.isBlacklisted}
+          customerType={pos.selectedCustomerType}
         />
 
         <POSCart
@@ -91,9 +92,8 @@ export default function POSClient({
       {/* EDIT CUSTOMER MODAL */}
       {pos.showEditCustomerModal && (
         <EditCustomerModal
-          customer={pos.selectedCustomer}
           onClose={() => pos.setShowEditCustomerModal(false)}
-          onSaved={pos.refreshCustomer}
+          onSelectCustomer={pos.handleSelectCustomer}
         />
       )}
 

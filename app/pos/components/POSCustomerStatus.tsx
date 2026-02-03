@@ -1,32 +1,18 @@
 // app/pos/components/POSCustomerStatus.tsx
 "use client";
 
-type Customer = {
-  id: number;
-  name: string;
-  phone: string | null;
-  email: string | null;
-  discount_id: number | null;
-  is_blacklisted: boolean;
-  blacklist_reason: string | null;
-  blacklist_start: string | null;
-  blacklist_end: string | null;
-};
-
-type Discount = {
-  id: number;
-  name: string;
-  percent: number;
-} | null;
+import type { Customer, Discount, SelectedCustomerType } from "../hooks/usePOS";
 
 export default function POSCustomerStatus({
   customer,
   discount,
   isBlacklisted,
+  customerType,
 }: {
   customer: Customer | null;
-  discount: Discount;
+  discount: Discount | null;
   isBlacklisted: boolean;
+  customerType: SelectedCustomerType;
 }) {
   return (
     <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
@@ -36,9 +22,17 @@ export default function POSCustomerStatus({
 
       {customer && (
         <div className="space-y-1 text-sm">
-          <p className="font-semibold text-slate-50">{customer.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-slate-50">{customer.name}</p>
+
+            {customerType === "staff" && (
+              <span className="text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-200">
+                Staff
+              </span>
+            )}
+          </div>
+
           {customer.phone && <p className="text-slate-300 text-xs">📞 {customer.phone}</p>}
-          {customer.email && <p className="text-slate-300 text-xs">✉️ {customer.email}</p>}
         </div>
       )}
 
@@ -46,6 +40,12 @@ export default function POSCustomerStatus({
 
       {isBlacklisted && (
         <p className="mt-2 text-red-400 font-bold">⚠️ This customer is currently blacklisted</p>
+      )}
+
+      {customerType === "staff" && (
+        <p className="mt-2 text-xs text-slate-400">
+          Staff sale — commission will be forced to $0.
+        </p>
       )}
     </div>
   );
