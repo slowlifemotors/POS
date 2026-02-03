@@ -81,12 +81,11 @@ function normalizeMenuKey(name: unknown) {
 }
 
 function indentPadding(depth: number) {
-  // IMPORTANT: use padding-left instead of margin-left.
-  // Using ml-* with w-full causes the element to exceed the container width.
-  if (depth <= 0) return "pl-0";
-  if (depth === 1) return "pl-4";
-  return "pl-8";
+  if (depth <= 0) return "pl-4";
+  if (depth === 1) return "pl-8";
+  return "pl-12";
 }
+
 
 export default function POSItems({
   vehicles,
@@ -177,7 +176,7 @@ export default function POSItems({
         <span className="text-slate-100 truncate">{node.name}</span>
 
         {/* Keep prices INSIDE the box: no overflow, fixed alignment */}
-        <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-[88px]">
+        <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-22">
           {priceInfo.text}
         </span>
       </button>
