@@ -55,22 +55,38 @@ export default function AddCustomerModal({
   // Search Customers (returns blacklist fields now)
   // ---------------------------------------------
   const searchCustomers = async () => {
-    if (!search.trim()) {
+    const term = search.trim();
+    if (!term) {
       setResults([]);
       return;
     }
 
     setLoading(true);
-    const res = await fetch(`/api/customers/search?q=${encodeURIComponent(search)}`);
-    const json = await res.json();
+    try {
+      const res = await fetch(
+        `/api/customers/search?q=${encodeURIComponent(term)}`
+      );
 
-    setResults(json.customers ?? []);
-    setLoading(false);
+      const json = await res.json().catch(() => ({}));
+
+      // ✅ SUPPORT BOTH SHAPES:
+      // - new: { results: [...] }
+      // - old: { customers: [...] }
+      const rows = (json.results ?? json.customers ?? []) as Customer[];
+
+      setResults(Array.isArray(rows) ? rows : []);
+    } catch (err) {
+      console.error("POS customer search failed:", err);
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     const delay = setTimeout(() => searchCustomers(), 300);
     return () => clearTimeout(delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   // ---------------------------------------------
@@ -83,36 +99,33 @@ export default function AddCustomerModal({
   };
 
   // ---------------------------------------------------
-// Select existing customer  (PATCHED VERSION)
-// ---------------------------------------------------
-const selectCustomer = async (customer: Customer) => {
-  let discount: Discount | null = null;
+  // Select existing customer
+  // ---------------------------------------------------
+  const selectCustomer = async (customer: Customer) => {
+    let discount: Discount | null = null;
 
-  if (customer.discount_id) {
-    discount = await loadDiscount(customer.discount_id);
-  }
+    if (customer.discount_id) {
+      discount = await loadDiscount(customer.discount_id);
+    }
 
-  // 🔥 FULL customer object returned, including blacklist fields
-  onSelectCustomer(
-    {
-      id: customer.id,
-      name: customer.name,
-      phone: customer.phone,
-      email: customer.email ?? null,
-      discount_id: customer.discount_id,
+    onSelectCustomer(
+      {
+        id: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        email: customer.email ?? null,
+        discount_id: customer.discount_id,
 
-      // BLACKLIST FIELDS
-      is_blacklisted: customer.is_blacklisted ?? false,
-      blacklist_reason: customer.blacklist_reason ?? null,
-      blacklist_start: customer.blacklist_start ?? null,
-      blacklist_end: customer.blacklist_end ?? null,
-    },
-    discount
-  );
+        is_blacklisted: customer.is_blacklisted ?? false,
+        blacklist_reason: customer.blacklist_reason ?? null,
+        blacklist_start: customer.blacklist_start ?? null,
+        blacklist_end: customer.blacklist_end ?? null,
+      },
+      discount
+    );
 
-  onClose();
-};
-
+    onClose();
+  };
 
   // ---------------------------------------------
   // Create new customer WITH blacklist fields defaulted
