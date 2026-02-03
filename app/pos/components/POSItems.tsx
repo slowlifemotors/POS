@@ -67,7 +67,7 @@ function computePriceLabel(
  * - All dropdowns open by default EXCEPT Cosmetics.
  *
  * Keys are normalized (lowercase, trimmed).
- * This applies regardless of nesting depth (so Cosmetics stays closed even under "Mods").
+ * This applies regardless of nesting depth (so Cosmetics stays closed even when nested.)
  */
 const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
   cosmetics: false,
@@ -78,6 +78,14 @@ const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
 
 function normalizeMenuKey(name: unknown) {
   return typeof name === "string" ? name.toLowerCase().trim() : "";
+}
+
+function indentPadding(depth: number) {
+  // IMPORTANT: use padding-left instead of margin-left.
+  // Using ml-* with w-full causes the element to exceed the container width.
+  if (depth <= 0) return "pl-0";
+  if (depth === 1) return "pl-4";
+  return "pl-8";
 }
 
 export default function POSItems({
@@ -107,33 +115,30 @@ export default function POSItems({
     });
   };
 
-  const defaultMenuOpen = (node: ModNode, depth: number) => {
+  const defaultMenuOpen = (node: ModNode) => {
     const key = normalizeMenuKey(node.name);
     if (key && Object.prototype.hasOwnProperty.call(MENU_DEFAULT_OPEN_BY_NAME, key)) {
       return MENU_DEFAULT_OPEN_BY_NAME[key];
     }
-
-    // Default behavior: open everything unless explicitly configured above.
-    // (Depth is intentionally not used to force Cosmetics closed even when nested.)
-    return true;
+    return true; // default: open everything unless configured
   };
 
   const renderNode = (node: ModNode, depth: number) => {
-    const indentClass = depth === 0 ? "" : depth === 1 ? "ml-4" : "ml-8";
+    const pad = indentPadding(depth);
 
     if (node.is_menu) {
-      const fallback = defaultMenuOpen(node, depth);
+      const fallback = defaultMenuOpen(node);
       const isOpen = openMap[node.id] !== undefined ? openMap[node.id] : fallback;
 
       return (
-        <div key={node.id} className={`${indentClass} mt-2`}>
+        <div key={node.id} className="mt-2">
           <button
             type="button"
             onClick={() => toggleMenu(node.id, isOpen)}
-            className="w-full flex items-center justify-between px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 transition"
+            className={`w-full flex items-center justify-between rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 transition overflow-hidden ${pad} pr-4 py-2`}
           >
-            <span className="font-semibold text-slate-50">{node.name}</span>
-            <span className="text-slate-300">{isOpen ? "▾" : "▸"}</span>
+            <span className="font-semibold text-slate-50 truncate">{node.name}</span>
+            <span className="text-slate-300 shrink-0">{isOpen ? "▾" : "▸"}</span>
           </button>
 
           {isOpen && (
@@ -156,7 +161,7 @@ export default function POSItems({
         type="button"
         disabled={disabled}
         onClick={() => onAddMod(node.id)}
-        className={`${indentClass} w-full text-left px-4 py-2 rounded-lg border text-sm font-medium transition flex items-center justify-between ${
+        className={`w-full text-left rounded-lg border text-sm font-medium transition flex items-center justify-between overflow-hidden ${pad} pr-4 py-2 ${
           disabled
             ? "bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
             : "bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
@@ -169,10 +174,12 @@ export default function POSItems({
               : "Add to cart"
         }
       >
-        <span className="text-slate-100">{node.name}</span>
+        <span className="text-slate-100 truncate">{node.name}</span>
 
-        {/* More right padding (via px-4) pulls this in; tabular nums look cleaner */}
-        <span className="text-xs text-slate-400 tabular-nums">{priceInfo.text}</span>
+        {/* Keep prices INSIDE the box: no overflow, fixed alignment */}
+        <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-[88px]">
+          {priceInfo.text}
+        </span>
       </button>
     );
   };
@@ -223,7 +230,7 @@ export default function POSItems({
         {/* MOD MENUS — width constrained */}
         {selectedVehicle && (
           <div className="mt-4 flex justify-center">
-            <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4">
+            <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
               {!modsRoot && (
                 <p className="text-slate-400 text-sm">
                   No mods available. Make sure the mods table is seeded and active.
