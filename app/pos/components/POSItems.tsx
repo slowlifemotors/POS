@@ -30,10 +30,7 @@ function vehicleName(v: Vehicle) {
  * - percentage value is COST (% of base price)
  * - sale price = cost * 2 (100% markup)
  * - flat value is already the SALE price
- *
- * UI RULE:
- * - Show FINAL SALE PRICE ONLY
- * - Rounded to nearest whole dollar
+ * - rounded to nearest dollar
  */
 function computePriceLabel(
   pricing_type: ModPricingType | null,
@@ -87,7 +84,6 @@ export default function POSItems({
 }: POSItemsProps) {
   const safeVehicles: Vehicle[] = Array.isArray(vehicles) ? vehicles : [];
 
-  // Collapsible menus: id -> open (only stores user toggles)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 
   const rootChildren = useMemo(() => {
@@ -133,7 +129,6 @@ export default function POSItems({
       );
     }
 
-    // Leaf mod button
     const base = selectedVehicle?.base_price ?? 0;
     const priceInfo = computePriceLabel(node.pricing_type, node.pricing_value, base);
     const disabled = !selectedVehicle || priceInfo.computed == null;
@@ -149,13 +144,6 @@ export default function POSItems({
             ? "bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
             : "bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
         }`}
-        title={
-          !selectedVehicle
-            ? "Select a vehicle first"
-            : priceInfo.computed == null
-            ? `No pricing set for "${node.name}" (set in /mods)`
-            : "Add to cart"
-        }
       >
         <span className="text-slate-100">{node.name}</span>
         <span className="text-xs text-slate-400">{priceInfo.text}</span>
@@ -165,6 +153,7 @@ export default function POSItems({
 
   return (
     <div className="flex-1 pt-24 p-6 overflow-y-auto">
+      {/* Search */}
       <input
         type="text"
         placeholder="Search vehicles"
@@ -173,6 +162,7 @@ export default function POSItems({
         onChange={(e) => setSearchTerm(e.target.value)}
       />
 
+      {/* Selected Vehicle */}
       <div className="mb-6">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -204,23 +194,27 @@ export default function POSItems({
           )}
         </div>
 
+        {/* MOD MENUS — width constrained */}
         {selectedVehicle && (
-          <div className="mt-4 bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4">
-            {!modsRoot && (
-              <p className="text-slate-400 text-sm">
-                No mods available. Make sure the mods table is seeded and active.
-              </p>
-            )}
+          <div className="mt-4 flex justify-center">
+            <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4">
+              {!modsRoot && (
+                <p className="text-slate-400 text-sm">
+                  No mods available. Make sure the mods table is seeded and active.
+                </p>
+              )}
 
-            {modsRoot && (
-              <div className="space-y-3">
-                {rootChildren.map((top) => renderNode(top, 0))}
-              </div>
-            )}
+              {modsRoot && (
+                <div className="space-y-3">
+                  {rootChildren.map((top) => renderNode(top, 0))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
+      {/* Vehicles grid (unchanged, full width) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {safeVehicles.map((v) => {
           const isSelected = selectedVehicle?.id === v.id;
@@ -243,14 +237,6 @@ export default function POSItems({
                 <p className="text-slate-400 text-sm">
                   {v.category ?? "Uncategorized"}
                 </p>
-
-                {(v.stock_class || v.maxed_class) && (
-                  <p className="text-slate-400 text-xs mt-1">
-                    {v.stock_class ? `Stock: ${v.stock_class}` : ""}
-                    {v.stock_class && v.maxed_class ? " • " : ""}
-                    {v.maxed_class ? `Maxed: ${v.maxed_class}` : ""}
-                  </p>
-                )}
 
                 <p className="mt-2 text-xl font-bold text-slate-50">
                   ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
