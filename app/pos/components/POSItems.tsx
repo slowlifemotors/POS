@@ -32,9 +32,6 @@ function vehicleName(v: Vehicle) {
  * - flat value is already the SALE price
  * - rounded to nearest dollar
  *
- * UI RULE:
- * - Keep price, but DO NOT show the percentage
- *
  * IMPORTANT:
  * - If no vehicle selected:
  *    - percentage mods can't be computed -> "Select vehicle"
@@ -82,9 +79,6 @@ function computePriceLabel(
 /**
  * MENU DEFAULTS (by menu name)
  * - All dropdowns open by default EXCEPT Cosmetics.
- *
- * Keys are normalized (lowercase, trimmed).
- * This applies regardless of nesting depth (so Cosmetics stays closed even when nested.)
  */
 const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
   cosmetics: false,
@@ -135,15 +129,25 @@ export default function POSItems({
     if (key && Object.prototype.hasOwnProperty.call(MENU_DEFAULT_OPEN_BY_NAME, key)) {
       return MENU_DEFAULT_OPEN_BY_NAME[key];
     }
-    return true; // default: open everything unless configured
+    return true;
   };
 
-  const renderNode = (node: ModNode, depth: number) => {
+  const selectedInactive = Boolean(selectedVehicle && selectedVehicle.active === false);
+
+  /**
+   * ✅ Inactive vehicle rule:
+   * - If selected vehicle is NOT active:
+   *   - only allow leaf mods that are within the Cosmetics menu path.
+   */
+  const renderNode = (node: ModNode, depth: number, inCosmeticsPath: boolean) => {
     const pad = indentPadding(depth);
 
     if (node.is_menu) {
       const fallback = defaultMenuOpen(node);
       const isOpen = openMap[node.id] !== undefined ? openMap[node.id] : fallback;
+
+      const menuKey = normalizeMenuKey(node.name);
+      const nextInCosmeticsPath = inCosmeticsPath || menuKey === "cosmetics";
 
       return (
         <div key={node.id} className="mt-2">
@@ -158,7 +162,9 @@ export default function POSItems({
 
           {isOpen && (
             <div className="mt-2 space-y-2">
-              {(node.children ?? []).map((child) => renderNode(child, depth + 1))}
+              {(node.children ?? []).map((child) =>
+                renderNode(child, depth + 1, nextInCosmeticsPath)
+              )}
             </div>
           )}
         </div>
@@ -169,17 +175,28 @@ export default function POSItems({
     const hasVehicle = Boolean(selectedVehicle);
     const vehicleBase = hasVehicle ? Number(selectedVehicle?.base_price ?? 0) : null;
 
-    const priceInfo = computePriceLabel(
-      node.pricing_type,
-      node.pricing_value,
-      vehicleBase
-    );
+    const priceInfo = computePriceLabel(node.pricing_type, node.pricing_value, vehicleBase);
 
-    // ✅ Flat mods should be enabled even without a vehicle
     const isFlat = node.pricing_type === "flat" && node.pricing_value != null;
-    const canAdd = isFlat || (hasVehicle && priceInfo.computed != null);
 
+    // Base add rules:
+    // - Flat mods can be added even without a vehicle
+    // - Percentage mods require a vehicle
+    const baseCanAdd = isFlat || (hasVehicle && priceInfo.computed != null);
+
+    // ✅ Inactive vehicle restriction:
+    const blockedByInactiveRule = selectedInactive && !inCosmeticsPath;
+
+    const canAdd = baseCanAdd && !blockedByInactiveRule;
     const disabled = !canAdd;
+
+    const title = disabled
+      ? blockedByInactiveRule
+        ? "Inactive vehicles can only receive Cosmetics changes"
+        : node.pricing_type === "percentage"
+          ? "Select a vehicle to price percentage mods"
+          : `No pricing set for "${node.name}" (set in /mods)`
+      : "Add to cart";
 
     return (
       <button
@@ -192,19 +209,12 @@ export default function POSItems({
             ? "bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
             : "bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
         }`}
-        title={
-          disabled
-            ? node.pricing_type === "percentage"
-              ? "Select a vehicle to price percentage mods"
-              : `No pricing set for "${node.name}" (set in /mods)`
-            : "Add to cart"
-        }
+        title={title}
       >
-        <span className="text-slate-100 truncate">{node.name}</span>
+        <span className="text-slate-100 truncate">{node.mod_name ?? node.name ?? "Mod"}</span>
 
-        {/* Keep prices INSIDE the box: no overflow, fixed alignment */}
         <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-22">
-          {priceInfo.text}
+          {blockedByInactiveRule ? "Cosmetics only" : priceInfo.text}
         </span>
       </button>
     );
@@ -214,7 +224,6 @@ export default function POSItems({
   const trimmedSearch = searchTerm.trim();
   const showVehicles = trimmedSearch.length > 0;
 
-  // If parent already filters vehicles, keep as-is; we just hide the grid when search is empty.
   const vehiclesToShow = safeVehicles;
 
   return (
@@ -235,12 +244,22 @@ export default function POSItems({
             <h2 className="text-lg font-semibold text-slate-50">
               {selectedVehicle ? "Selected Vehicle" : "Select a Vehicle"}
             </h2>
+
             {selectedVehicle ? (
               <p className="text-slate-300 text-sm">
                 {vehicleName(selectedVehicle)} —{" "}
                 <span className="text-slate-200 font-semibold">
                   ${Math.round(Number(selectedVehicle.base_price ?? 0)).toLocaleString()}
-                </span>
+                </span>{" "}
+                {selectedVehicle.active ? (
+                  <span className="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/40 text-emerald-200">
+                    Active
+                  </span>
+                ) : (
+                  <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200">
+                    Inactive (Cosmetics only)
+                  </span>
+                )}
               </p>
             ) : (
               <p className="text-slate-400 text-sm">
@@ -260,7 +279,7 @@ export default function POSItems({
           )}
         </div>
 
-        {/* MOD MENUS — always show (even without vehicle) so flat mods are usable */}
+        {/* MOD MENUS — always show so flat mods are usable */}
         <div className="mt-4 flex justify-center">
           <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
             {!modsRoot && (
@@ -270,7 +289,9 @@ export default function POSItems({
             )}
 
             {modsRoot && (
-              <div className="space-y-3">{rootChildren.map((top) => renderNode(top, 0))}</div>
+              <div className="space-y-3">
+                {rootChildren.map((top) => renderNode(top, 0, false))}
+              </div>
             )}
           </div>
         </div>
@@ -278,13 +299,12 @@ export default function POSItems({
 
       {/* Vehicles grid (hidden unless searched) */}
       {!showVehicles ? (
-        <p className="text-slate-500 text-center mt-10">
-          Start typing to search vehicles.
-        </p>
+        <p className="text-slate-500 text-center mt-10">Start typing to search vehicles.</p>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {vehiclesToShow.map((v) => {
             const isSelected = selectedVehicle?.id === v.id;
+            const isInactive = v.active === false;
 
             return (
               <div
@@ -294,10 +314,20 @@ export default function POSItems({
                   isSelected
                     ? "bg-slate-900/90 border-(--accent)"
                     : "bg-slate-900/80 backdrop-blur border-slate-700"
-                }`}
+                } ${isInactive ? "opacity-90" : ""}`}
+                title={isInactive ? "Inactive vehicle — Cosmetics only" : "Active vehicle"}
               >
                 <div className="p-4">
-                  <h2 className="font-semibold text-lg text-slate-50">{vehicleName(v)}</h2>
+                  <div className="flex items-start justify-between gap-2">
+                    <h2 className="font-semibold text-lg text-slate-50 truncate">
+                      {vehicleName(v)}
+                    </h2>
+                    {isInactive && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200 shrink-0">
+                        Inactive
+                      </span>
+                    )}
+                  </div>
 
                   <p className="text-slate-400 text-sm">{v.category ?? "Uncategorized"}</p>
 
@@ -312,6 +342,12 @@ export default function POSItems({
                   <p className="mt-2 text-xl font-bold text-slate-50">
                     ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
                   </p>
+
+                  {isInactive && (
+                    <p className="mt-2 text-xs text-amber-200/80">
+                      Cosmetics only
+                    </p>
+                  )}
                 </div>
               </div>
             );

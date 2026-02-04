@@ -138,14 +138,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
-  // ✅ track whether selected person was staff (for discount / commission logic)
-  const [selectedCustomerType, setSelectedCustomerType] =
-    useState<SelectedCustomerType>(null);
+  // ✅ NEW: track whether selected person was staff (for commission=0 rule)
+  const [selectedCustomerType, setSelectedCustomerType] = useState<SelectedCustomerType>(null);
 
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
-  // disable UI while "processing payment"
+  // NEW: disable UI while "processing payment"
   const [isPaying, setIsPaying] = useState(false);
 
   // -------------------------
@@ -154,9 +153,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const loadVehicles = async () => {
     const { data, error } = await supabase
       .from("vehicles")
-      .select(
-        "id, manufacturer, model, base_price, category, stock_class, maxed_class, note, active"
-      )
+      .select("id, manufacturer, model, base_price, category, stock_class, maxed_class, note, active")
       .order("manufacturer", { ascending: true })
       .order("model", { ascending: true });
 
@@ -220,10 +217,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   // -------------------------
   // FILTER VEHICLES
+  // ✅ CHANGE: DO NOT filter out inactive vehicles anymore.
+  // You still hide the grid until searched in POSItems.tsx.
   // -------------------------
   const filteredVehicles = useMemo(() => {
     const s = searchTerm.trim().toLowerCase();
-    const base = vehicles.filter((v) => v.active);
+    const base = vehicles; // ✅ includes active + inactive
 
     if (!s) return base;
 
@@ -234,6 +233,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         v.stock_class ?? "",
         v.maxed_class ?? "",
         v.note ?? "",
+        v.active ? "active" : "inactive",
       ]
         .join(" ")
         .toLowerCase();
@@ -293,9 +293,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       const existing = prev.find((c) => c.id === lineId);
 
       if (existing) {
-        return prev.map((c) =>
-          c.id === lineId ? { ...c, quantity: c.quantity + 1 } : c
-        );
+        return prev.map((c) => (c.id === lineId ? { ...c, quantity: c.quantity + 1 } : c));
       }
 
       return [
@@ -323,11 +321,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const updateQty = (id: string, amt: number) => {
     setCart((prev) =>
       prev
-        .map((item) =>
-          item.id === id
-            ? { ...item, quantity: Math.max(1, item.quantity + amt) }
-            : item
-        )
+        .map((item) => (item.id === id ? { ...item, quantity: Math.max(1, item.quantity + amt) } : item))
         .filter((i) => i.quantity > 0)
     );
   };
@@ -339,15 +333,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   // -------------------------
   // TOTALS
   // RULE: POS final total is ALWAYS rounded UP to the next full dollar.
-  // If selectedCustomerType === "staff", discount is forced OFF.
   // -------------------------
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-  const discountPercent =
-    selectedCustomerType === "staff" ? 0 : discount ? discount.percent : 0;
-
-  const discountAmount =
-    selectedCustomerType === "staff" ? 0 : (subtotal * discountPercent) / 100;
+  const discountPercent = discount ? discount.percent : 0;
+  const discountAmount = (subtotal * discountPercent) / 100;
 
   const rawTotal = roundToCents(subtotal - discountAmount);
   const total = Math.ceil(rawTotal);
@@ -379,21 +368,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   // -------------------------
   // CUSTOMER SELECTION
   // -------------------------
-  const handleSelectCustomer = (
-    customer: Customer,
-    disc: Discount | null,
-    customerType: SelectedCustomerType = "customer"
-  ) => {
+  const handleSelectCustomer = (customer: Customer, disc: Discount | null, customerType: SelectedCustomerType = "customer") => {
     setSelectedCustomer(customer);
     setSelectedCustomerType(customerType);
-
-    // ✅ staff sale: force discounts off
-    if (customerType === "staff") {
-      setDiscount(null);
-    } else {
-      setDiscount(disc);
-    }
-
+    setDiscount(disc);
     setShowCustomerModal(false);
   };
 
@@ -403,24 +381,14 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const refreshCustomer = async () => {
     if (!selectedCustomer) return;
 
-    const res = await fetch(`/api/customers?id=${selectedCustomer.id}`, {
-      cache: "no-store",
-    });
+    const res = await fetch(`/api/customers?id=${selectedCustomer.id}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
 
     if (json.customer) {
       setSelectedCustomer(json.customer);
 
-      // ✅ if currently staff-type, force discount off
-      if (selectedCustomerType === "staff") {
-        setDiscount(null);
-        return;
-      }
-
       if (json.customer.discount_id) {
-        const dres = await fetch(`/api/discounts?id=${json.customer.discount_id}`, {
-          cache: "no-store",
-        });
+        const dres = await fetch(`/api/discounts?id=${json.customer.discount_id}`, { cache: "no-store" });
         const djson = await dres.json().catch(() => ({}));
         setDiscount(djson.discount || null);
       } else {
@@ -457,23 +425,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         staff_id: staffId,
         vehicle_id: selectedVehicle.id,
         customer_id: selectedCustomer ? selectedCustomer.id : null,
-
-        // ✅ enforce: if staff selected, discount_id must be null
-        discount_id:
-          selectedCustomerType === "staff" ? null : discount ? discount.id : null,
-
-        // ✅ Persist staff-sale intent for commission logic (and server validation)
+        discount_id: discount ? discount.id : null,
         customer_is_staff: selectedCustomerType === "staff",
-
         vehicle_base_price: Number(selectedVehicle.base_price ?? 0),
-
-        // Client values are informational; server recalculates anyway
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount),
         total,
-
         note: note?.trim() || null,
-
         lines: cart.map((c) => ({
           vehicle_id: c.vehicle_id,
           mod_id: c.mod_id,
@@ -498,7 +456,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         return;
       }
 
-      // Reset POS state for next sale
       setCart([]);
       setIsCheckoutOpen(false);
       setSelectedCustomer(null);
@@ -513,7 +470,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   return {
-    // data
     vehicles,
     filteredVehicles,
     selectedVehicle,
@@ -534,7 +490,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     isBlacklisted,
     isPaying,
 
-    // actions
     setSearchTerm,
     selectVehicle,
     clearVehicle,
@@ -548,7 +503,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     handleSelectCustomer,
     refreshCustomer,
 
-    // new
     createOrder,
     reloadModsTree: loadModsTree,
   };
