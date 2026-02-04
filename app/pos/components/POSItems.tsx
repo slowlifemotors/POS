@@ -211,7 +211,7 @@ export default function POSItems({
         }`}
         title={title}
       >
-        <span className="text-slate-100 truncate">{node.mod_name ?? node.name ?? "Mod"}</span>
+        <span className="text-slate-100 truncate">{node.name ?? "Mod"}</span>
 
         <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-22">
           {blockedByInactiveRule ? "Cosmetics only" : priceInfo.text}
