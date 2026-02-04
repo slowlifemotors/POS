@@ -34,32 +34,49 @@ function vehicleName(v: Vehicle) {
  *
  * UI RULE:
  * - Keep price, but DO NOT show the percentage
+ *
+ * IMPORTANT:
+ * - If no vehicle selected:
+ *    - percentage mods can't be computed -> "Select vehicle"
+ *    - flat mods can be computed -> show price
  */
 function computePriceLabel(
   pricing_type: ModPricingType | null,
   pricing_value: number | null,
-  vehicleBasePrice: number
+  vehicleBasePrice: number | null
 ) {
   if (!pricing_type || pricing_value == null) {
     return { text: "No price", computed: null };
   }
 
-  let sale: number;
-
-  if (pricing_type === "percentage") {
-    const pct = Number(pricing_value);
-    const cost = (vehicleBasePrice * pct) / 100;
-    sale = cost * 2;
-  } else {
-    sale = Number(pricing_value);
+  // Flat mods do NOT need a vehicle
+  if (pricing_type === "flat") {
+    const sale = Number(pricing_value);
+    const rounded = Math.round(sale);
+    return {
+      text: `$${rounded.toLocaleString()}`,
+      computed: rounded,
+    };
   }
 
-  const rounded = Math.round(sale);
+  // Percentage mods need a vehicle base price
+  if (pricing_type === "percentage") {
+    if (vehicleBasePrice == null) {
+      return { text: "Select vehicle", computed: null };
+    }
 
-  return {
-    text: `$${rounded.toLocaleString()}`,
-    computed: rounded,
-  };
+    const pct = Number(pricing_value);
+    const cost = (vehicleBasePrice * pct) / 100;
+    const sale = cost * 2;
+    const rounded = Math.round(sale);
+
+    return {
+      text: `$${rounded.toLocaleString()}`,
+      computed: rounded,
+    };
+  }
+
+  return { text: "No price", computed: null };
 }
 
 /**
@@ -85,7 +102,6 @@ function indentPadding(depth: number) {
   if (depth === 1) return "pl-8";
   return "pl-12";
 }
-
 
 export default function POSItems({
   vehicles,
@@ -150,9 +166,20 @@ export default function POSItems({
     }
 
     // Leaf mod button
-    const base = selectedVehicle?.base_price ?? 0;
-    const priceInfo = computePriceLabel(node.pricing_type, node.pricing_value, base);
-    const disabled = !selectedVehicle || priceInfo.computed == null;
+    const hasVehicle = Boolean(selectedVehicle);
+    const vehicleBase = hasVehicle ? Number(selectedVehicle?.base_price ?? 0) : null;
+
+    const priceInfo = computePriceLabel(
+      node.pricing_type,
+      node.pricing_value,
+      vehicleBase
+    );
+
+    // ✅ Flat mods should be enabled even without a vehicle
+    const isFlat = node.pricing_type === "flat" && node.pricing_value != null;
+    const canAdd = isFlat || (hasVehicle && priceInfo.computed != null);
+
+    const disabled = !canAdd;
 
     return (
       <button
@@ -166,11 +193,11 @@ export default function POSItems({
             : "bg-slate-900 border-slate-700 text-slate-100 hover:bg-slate-800"
         }`}
         title={
-          !selectedVehicle
-            ? "Select a vehicle first"
-            : priceInfo.computed == null
-              ? `No pricing set for "${node.name}" (set in /mods)`
-              : "Add to cart"
+          disabled
+            ? node.pricing_type === "percentage"
+              ? "Select a vehicle to price percentage mods"
+              : `No pricing set for "${node.name}" (set in /mods)`
+            : "Add to cart"
         }
       >
         <span className="text-slate-100 truncate">{node.name}</span>
@@ -182,6 +209,13 @@ export default function POSItems({
       </button>
     );
   };
+
+  // ✅ Vehicles should NOT show unless search has text
+  const trimmedSearch = searchTerm.trim();
+  const showVehicles = trimmedSearch.length > 0;
+
+  // If parent already filters vehicles, keep as-is; we just hide the grid when search is empty.
+  const vehiclesToShow = safeVehicles;
 
   return (
     <div className="flex-1 pt-24 p-6 overflow-y-auto">
@@ -210,7 +244,7 @@ export default function POSItems({
               </p>
             ) : (
               <p className="text-slate-400 text-sm">
-                Click a vehicle below to show available mods.
+                Select a vehicle to price percentage-based mods. Flat-priced mods can be added anytime.
               </p>
             )}
           </div>
@@ -226,64 +260,68 @@ export default function POSItems({
           )}
         </div>
 
-        {/* MOD MENUS — width constrained */}
-        {selectedVehicle && (
-          <div className="mt-4 flex justify-center">
-            <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
-              {!modsRoot && (
-                <p className="text-slate-400 text-sm">
-                  No mods available. Make sure the mods table is seeded and active.
-                </p>
-              )}
+        {/* MOD MENUS — always show (even without vehicle) so flat mods are usable */}
+        <div className="mt-4 flex justify-center">
+          <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
+            {!modsRoot && (
+              <p className="text-slate-400 text-sm">
+                No mods available. Make sure the mods table is seeded and active.
+              </p>
+            )}
 
-              {modsRoot && (
-                <div className="space-y-3">{rootChildren.map((top) => renderNode(top, 0))}</div>
-              )}
-            </div>
+            {modsRoot && (
+              <div className="space-y-3">{rootChildren.map((top) => renderNode(top, 0))}</div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Vehicles grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {safeVehicles.map((v) => {
-          const isSelected = selectedVehicle?.id === v.id;
+      {/* Vehicles grid (hidden unless searched) */}
+      {!showVehicles ? (
+        <p className="text-slate-500 text-center mt-10">
+          Start typing to search vehicles.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {vehiclesToShow.map((v) => {
+            const isSelected = selectedVehicle?.id === v.id;
 
-          return (
-            <div
-              key={v.id}
-              onClick={() => onSelectVehicle(v)}
-              className={`rounded-xl border cursor-pointer hover:scale-[1.02] transition ${
-                isSelected
-                  ? "bg-slate-900/90 border-(--accent)"
-                  : "bg-slate-900/80 backdrop-blur border-slate-700"
-              }`}
-            >
-              <div className="p-4">
-                <h2 className="font-semibold text-lg text-slate-50">{vehicleName(v)}</h2>
+            return (
+              <div
+                key={v.id}
+                onClick={() => onSelectVehicle(v)}
+                className={`rounded-xl border cursor-pointer hover:scale-[1.02] transition ${
+                  isSelected
+                    ? "bg-slate-900/90 border-(--accent)"
+                    : "bg-slate-900/80 backdrop-blur border-slate-700"
+                }`}
+              >
+                <div className="p-4">
+                  <h2 className="font-semibold text-lg text-slate-50">{vehicleName(v)}</h2>
 
-                <p className="text-slate-400 text-sm">{v.category ?? "Uncategorized"}</p>
+                  <p className="text-slate-400 text-sm">{v.category ?? "Uncategorized"}</p>
 
-                {(v.stock_class || v.maxed_class) && (
-                  <p className="text-slate-400 text-xs mt-1">
-                    {v.stock_class ? `Stock: ${v.stock_class}` : ""}
-                    {v.stock_class && v.maxed_class ? " • " : ""}
-                    {v.maxed_class ? `Maxed: ${v.maxed_class}` : ""}
+                  {(v.stock_class || v.maxed_class) && (
+                    <p className="text-slate-400 text-xs mt-1">
+                      {v.stock_class ? `Stock: ${v.stock_class}` : ""}
+                      {v.stock_class && v.maxed_class ? " • " : ""}
+                      {v.maxed_class ? `Maxed: ${v.maxed_class}` : ""}
+                    </p>
+                  )}
+
+                  <p className="mt-2 text-xl font-bold text-slate-50">
+                    ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
                   </p>
-                )}
-
-                <p className="mt-2 text-xl font-bold text-slate-50">
-                  ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
-                </p>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
 
-        {safeVehicles.length === 0 && (
-          <p className="text-slate-500 col-span-full text-center mt-10">No vehicles found.</p>
-        )}
-      </div>
+          {vehiclesToShow.length === 0 && (
+            <p className="text-slate-500 col-span-full text-center mt-10">No vehicles found.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
