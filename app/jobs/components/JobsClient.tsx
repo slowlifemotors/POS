@@ -73,8 +73,15 @@ export default function JobsClient({
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
+  // ✅ NEW: collapse/expand mods per order
+  const [openLines, setOpenLines] = useState<Record<string, boolean>>({});
+
   const safeOrders = Array.isArray(orders) ? orders : [];
   const shownCount = useMemo(() => safeOrders.length, [safeOrders]);
+
+  const toggleLines = (orderId: string) => {
+    setOpenLines((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
+  };
 
   async function voidOrder(orderId: string) {
     const reason = prompt("Reason for voiding this entire job?", "Voided");
@@ -176,6 +183,12 @@ export default function JobsClient({
                 const orderLines = Array.isArray(linesByOrderId[o.id]) ? linesByOrderId[o.id] : [];
                 const orderIsVoided = String(o.status ?? "").toLowerCase() === "void";
 
+                const isOpen = openLines[o.id] ?? false;
+
+                const totalLines = orderLines.length;
+                const activeLines = orderLines.filter((l) => !l.is_voided).length;
+                const voidedLines = totalLines - activeLines;
+
                 return (
                   <div key={o.id} className="p-4">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -220,7 +233,9 @@ export default function JobsClient({
                           <p className="text-sm text-slate-400">
                             Discount: -${fmtMoney(o.discount_amount)}
                           </p>
-                          <p className="text-xl font-bold text-emerald-400">Total: ${fmtMoney(o.total)}</p>
+                          <p className="text-xl font-bold text-emerald-400">
+                            Total: ${fmtMoney(o.total)}
+                          </p>
                           <p className="text-xs text-slate-500 mt-1">Status: {o.status}</p>
                         </div>
 
@@ -235,12 +250,28 @@ export default function JobsClient({
                       </div>
                     </div>
 
+                    {/* ✅ Collapsible "Mods applied" (dropdown-style) */}
                     <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-slate-800 text-sm font-semibold text-slate-200">
-                        Mods applied
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleLines(o.id)}
+                        className="w-full px-3 py-2 border-b border-slate-800 text-sm font-semibold text-slate-200 flex items-center justify-between hover:bg-slate-900/60"
+                      >
+                        <span>Mods applied</span>
+                        <span className="text-xs text-slate-400 flex items-center gap-3">
+                          <span>
+                            {activeLines}/{totalLines} active
+                            {voidedLines > 0 ? ` · ${voidedLines} voided` : ""}
+                          </span>
+                          <span className="text-slate-300">{isOpen ? "▾" : "▸"}</span>
+                        </span>
+                      </button>
 
-                      {orderLines.length === 0 ? (
+                      {!isOpen ? (
+                        <div className="px-3 py-3 text-sm text-slate-400">
+                          Click to expand.
+                        </div>
+                      ) : orderLines.length === 0 ? (
                         <div className="p-3 text-sm text-slate-400">No lines found.</div>
                       ) : (
                         <div className="divide-y divide-slate-800">
@@ -255,7 +286,11 @@ export default function JobsClient({
                                 className="px-3 py-2 text-sm flex items-start justify-between gap-4"
                               >
                                 <div className="min-w-0">
-                                  <p className={`text-slate-100 truncate ${lineIsVoided ? "line-through opacity-60" : ""}`}>
+                                  <p
+                                    className={`text-slate-100 truncate ${
+                                      lineIsVoided ? "line-through opacity-60" : ""
+                                    }`}
+                                  >
                                     {l.mod_name}
                                   </p>
 
@@ -303,7 +338,9 @@ export default function JobsClient({
           )}
         </div>
 
-        <p className="text-xs text-slate-500 mt-6">Manager+ can void items or entire jobs. Voids are audit-tracked.</p>
+        <p className="text-xs text-slate-500 mt-6">
+          Manager+ can void items or entire jobs. Voids are audit-tracked.
+        </p>
       </div>
     </div>
   );
