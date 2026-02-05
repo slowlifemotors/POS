@@ -11,7 +11,6 @@ type SearchResult =
   | ({
       type: "staff";
       username?: string | null;
-      // staff results are not real customers yet
       discount_id: null;
       is_blacklisted: false;
       blacklist_reason: null;
@@ -92,7 +91,7 @@ export default function AddCustomerModal({
   };
 
   // ---------------------------------------------
-  // Create customer helper (used for staff clicks too)
+  // Create customer helper (manual creation only)
   // ---------------------------------------------
   const createCustomer = async (name: string, phone: string | null, discountId: number | null) => {
     const res = await fetch("/api/customers", {
@@ -114,7 +113,7 @@ export default function AddCustomerModal({
   // Select existing customer OR staff
   // ---------------------------------------------------
   const selectResult = async (r: SearchResult) => {
-    // If it's already a customer, select normally
+    // Customer: normal
     if (r.type === "customer") {
       let discount: Discount | null = null;
       if (r.discount_id) discount = await loadDiscount(r.discount_id);
@@ -124,19 +123,25 @@ export default function AddCustomerModal({
       return;
     }
 
-    // If it's staff, create a customer on-the-fly then select it
-    try {
-      const created = await createCustomer(r.name, r.phone ?? null, null);
+    /**
+     * ✅ Staff: DO NOT create a customer row.
+     * We pass a "pseudo customer" object for UI purposes,
+     * and the order payload will treat this as staff (no customer_id).
+     */
+    const pseudoCustomer: Customer = {
+      // Use a negative ID to avoid accidental collision with real customer ids
+      id: -Math.abs(Number(r.id)),
+      name: r.name,
+      phone: r.phone ?? null,
+      discount_id: null,
+      is_blacklisted: false,
+      blacklist_reason: null,
+      blacklist_start: null,
+      blacklist_end: null,
+    };
 
-      let discountObj: Discount | null = null;
-      if (created.discount_id) discountObj = await loadDiscount(created.discount_id);
-
-      // ✅ IMPORTANT: mark this selection as staff so commission can be forced to 0
-      onSelectCustomer(created, discountObj, "staff");
-      onClose();
-    } catch (e: any) {
-      alert(e?.message ?? "Failed to select staff as customer.");
-    }
+    onSelectCustomer(pseudoCustomer, null, "staff");
+    onClose();
   };
 
   // ---------------------------------------------

@@ -46,7 +46,6 @@ function computePriceLabel(
     return { text: "No price", computed: null };
   }
 
-  // Flat mods do NOT need a vehicle
   if (pricing_type === "flat") {
     const sale = Number(pricing_value);
     const rounded = Math.round(sale);
@@ -56,7 +55,6 @@ function computePriceLabel(
     };
   }
 
-  // Percentage mods need a vehicle base price
   if (pricing_type === "percentage") {
     if (vehicleBasePrice == null) {
       return { text: "Select vehicle", computed: null };
@@ -76,10 +74,6 @@ function computePriceLabel(
   return { text: "No price", computed: null };
 }
 
-/**
- * MENU DEFAULTS (by menu name)
- * - All dropdowns open by default EXCEPT Cosmetics.
- */
 const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
   cosmetics: false,
   upgrades: true,
@@ -109,7 +103,6 @@ export default function POSItems({
 }: POSItemsProps) {
   const safeVehicles: Vehicle[] = Array.isArray(vehicles) ? vehicles : [];
 
-  // Collapsible menus: id -> open (only stores user toggles; defaults come from config)
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
 
   const rootChildren = useMemo(() => {
@@ -134,11 +127,6 @@ export default function POSItems({
 
   const selectedInactive = Boolean(selectedVehicle && selectedVehicle.active === false);
 
-  /**
-   * ✅ Inactive vehicle rule:
-   * - If selected vehicle is NOT active:
-   *   - only allow leaf mods that are within the Cosmetics menu path.
-   */
   const renderNode = (node: ModNode, depth: number, inCosmeticsPath: boolean) => {
     const pad = indentPadding(depth);
 
@@ -162,16 +150,13 @@ export default function POSItems({
 
           {isOpen && (
             <div className="mt-2 space-y-2">
-              {(node.children ?? []).map((child) =>
-                renderNode(child, depth + 1, nextInCosmeticsPath)
-              )}
+              {(node.children ?? []).map((child) => renderNode(child, depth + 1, nextInCosmeticsPath))}
             </div>
           )}
         </div>
       );
     }
 
-    // Leaf mod button
     const hasVehicle = Boolean(selectedVehicle);
     const vehicleBase = hasVehicle ? Number(selectedVehicle?.base_price ?? 0) : null;
 
@@ -180,11 +165,11 @@ export default function POSItems({
     const isFlat = node.pricing_type === "flat" && node.pricing_value != null;
 
     // Base add rules:
-    // - Flat mods can be added even without a vehicle
+    // - Flat mods can be added even without a vehicle (usePOS will further restrict which ones)
     // - Percentage mods require a vehicle
     const baseCanAdd = isFlat || (hasVehicle && priceInfo.computed != null);
 
-    // ✅ Inactive vehicle restriction:
+    // Inactive vehicle restriction:
     const blockedByInactiveRule = selectedInactive && !inCosmeticsPath;
 
     const canAdd = baseCanAdd && !blockedByInactiveRule;
@@ -212,7 +197,6 @@ export default function POSItems({
         title={title}
       >
         <span className="text-slate-100 truncate">{node.name ?? "Mod"}</span>
-
         <span className="text-xs text-slate-400 tabular-nums shrink-0 text-right min-w-22">
           {blockedByInactiveRule ? "Cosmetics only" : priceInfo.text}
         </span>
@@ -220,14 +204,11 @@ export default function POSItems({
     );
   };
 
-  // ✅ Vehicles should NOT show unless search has text
   const trimmedSearch = searchTerm.trim();
   const showVehicles = trimmedSearch.length > 0;
 
-  const vehiclesToShow = safeVehicles;
-
   return (
-    <div className="flex-1 pt-24 p-6 overflow-y-auto">
+    <div className="pt-24 p-6 overflow-y-auto">
       {/* Search */}
       <input
         type="text"
@@ -237,51 +218,110 @@ export default function POSItems({
         onChange={(e) => setSearchTerm(e.target.value)}
       />
 
-      {/* Selected Vehicle + Mod Menus */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-50">
-              {selectedVehicle ? "Selected Vehicle" : "Select a Vehicle"}
-            </h2>
+      {/* 2-column layout */}
+      <div className="flex gap-6 items-start">
+        {/* LEFT: Vehicles (only when searching) */}
+        <div className="w-[42%]">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+              <p className="font-semibold text-slate-100">Vehicles</p>
+              {!showVehicles && <p className="text-xs text-slate-500">Type to search</p>}
+            </div>
 
-            {selectedVehicle ? (
-              <p className="text-slate-300 text-sm">
-                {vehicleName(selectedVehicle)} —{" "}
-                <span className="text-slate-200 font-semibold">
-                  ${Math.round(Number(selectedVehicle.base_price ?? 0)).toLocaleString()}
-                </span>{" "}
-                {selectedVehicle.active ? (
-                  <span className="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/40 text-emerald-200">
-                    Active
-                  </span>
-                ) : (
-                  <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200">
-                    Inactive (Cosmetics only)
-                  </span>
-                )}
-              </p>
+            {!showVehicles ? (
+              <div className="p-4 text-slate-500 text-sm">Start typing to search vehicles.</div>
             ) : (
-              <p className="text-slate-400 text-sm">
-                Select a vehicle to price percentage-based mods. Flat-priced mods can be added anytime.
-              </p>
+              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                {safeVehicles.length === 0 ? (
+                  <p className="text-slate-500 col-span-full text-center">No vehicles found.</p>
+                ) : (
+                  safeVehicles.map((v) => {
+                    const isSelected = selectedVehicle?.id === v.id;
+                    const isInactive = v.active === false;
+
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => onSelectVehicle(v)}
+                        className={`rounded-xl border cursor-pointer hover:scale-[1.01] transition ${
+                          isSelected
+                            ? "bg-slate-900/90 border-(--accent)"
+                            : "bg-slate-900/80 backdrop-blur border-slate-700"
+                        } ${isInactive ? "opacity-90" : ""}`}
+                        title={isInactive ? "Inactive vehicle — Cosmetics only" : "Active vehicle"}
+                      >
+                        <div className="p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <h2 className="font-semibold text-slate-50 truncate">{vehicleName(v)}</h2>
+                            {isInactive && (
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200 shrink-0">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-slate-400 text-xs">{v.category ?? "Uncategorized"}</p>
+
+                          <p className="mt-2 text-base font-bold text-slate-50">
+                            ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
+                          </p>
+
+                          {isInactive && (
+                            <p className="mt-1 text-[11px] text-amber-200/80">Cosmetics only</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: Selected Vehicle + Mods */}
+        <div className="flex-1">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-50">
+                {selectedVehicle ? "Selected Vehicle" : "No Vehicle Selected"}
+              </h2>
+
+              {selectedVehicle ? (
+                <p className="text-slate-300 text-sm">
+                  {vehicleName(selectedVehicle)} —{" "}
+                  <span className="text-slate-200 font-semibold">
+                    ${Math.round(Number(selectedVehicle.base_price ?? 0)).toLocaleString()}
+                  </span>{" "}
+                  {selectedVehicle.active ? (
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/40 text-emerald-200">
+                      Active
+                    </span>
+                  ) : (
+                    <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200">
+                      Inactive (Cosmetics only)
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="text-slate-400 text-sm">
+                  Flat-priced items can still be sold (e.g. Repair / Repair Kit / Screwdriver).
+                </p>
+              )}
+            </div>
+
+            {selectedVehicle && (
+              <button
+                type="button"
+                onClick={onClearVehicle}
+                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 hover:bg-slate-700 transition"
+              >
+                Clear Vehicle
+              </button>
             )}
           </div>
 
-          {selectedVehicle && (
-            <button
-              type="button"
-              onClick={onClearVehicle}
-              className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 hover:bg-slate-700 transition"
-            >
-              Change Vehicle
-            </button>
-          )}
-        </div>
-
-        {/* MOD MENUS — always show so flat mods are usable */}
-        <div className="mt-4 flex justify-center">
-          <div className="w-full max-w-2xl bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
+          <div className="w-full bg-slate-900/80 backdrop-blur border border-slate-700 rounded-xl p-4 overflow-hidden">
             {!modsRoot && (
               <p className="text-slate-400 text-sm">
                 No mods available. Make sure the mods table is seeded and active.
@@ -289,75 +329,11 @@ export default function POSItems({
             )}
 
             {modsRoot && (
-              <div className="space-y-3">
-                {rootChildren.map((top) => renderNode(top, 0, false))}
-              </div>
+              <div className="space-y-3">{rootChildren.map((top) => renderNode(top, 0, false))}</div>
             )}
           </div>
         </div>
       </div>
-
-      {/* Vehicles grid (hidden unless searched) */}
-      {!showVehicles ? (
-        <p className="text-slate-500 text-center mt-10">Start typing to search vehicles.</p>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {vehiclesToShow.map((v) => {
-            const isSelected = selectedVehicle?.id === v.id;
-            const isInactive = v.active === false;
-
-            return (
-              <div
-                key={v.id}
-                onClick={() => onSelectVehicle(v)}
-                className={`rounded-xl border cursor-pointer hover:scale-[1.02] transition ${
-                  isSelected
-                    ? "bg-slate-900/90 border-(--accent)"
-                    : "bg-slate-900/80 backdrop-blur border-slate-700"
-                } ${isInactive ? "opacity-90" : ""}`}
-                title={isInactive ? "Inactive vehicle — Cosmetics only" : "Active vehicle"}
-              >
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <h2 className="font-semibold text-lg text-slate-50 truncate">
-                      {vehicleName(v)}
-                    </h2>
-                    {isInactive && (
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/40 text-amber-200 shrink-0">
-                        Inactive
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-slate-400 text-sm">{v.category ?? "Uncategorized"}</p>
-
-                  {(v.stock_class || v.maxed_class) && (
-                    <p className="text-slate-400 text-xs mt-1">
-                      {v.stock_class ? `Stock: ${v.stock_class}` : ""}
-                      {v.stock_class && v.maxed_class ? " • " : ""}
-                      {v.maxed_class ? `Maxed: ${v.maxed_class}` : ""}
-                    </p>
-                  )}
-
-                  <p className="mt-2 text-xl font-bold text-slate-50">
-                    ${Math.round(Number(v.base_price ?? 0)).toLocaleString()}
-                  </p>
-
-                  {isInactive && (
-                    <p className="mt-2 text-xs text-amber-200/80">
-                      Cosmetics only
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-
-          {vehiclesToShow.length === 0 && (
-            <p className="text-slate-500 col-span-full text-center mt-10">No vehicles found.</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }

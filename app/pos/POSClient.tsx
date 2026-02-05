@@ -20,8 +20,8 @@ export default function POSClient({
 
   return (
     <div className="flex h-screen bg-transparent text-slate-50">
-      {/* LEFT SIDE – VEHICLES + MODS */}
-      <div className="flex-1 pt-24 p-6 overflow-y-auto">
+      {/* LEFT SIDE – VEHICLES (left column) + MODS (right column) */}
+      <div className="flex-1">
         <POSItems
           vehicles={pos.filteredVehicles}
           selectedVehicle={pos.selectedVehicle}
@@ -57,20 +57,22 @@ export default function POSClient({
           originalTotal={pos.originalTotal}
           discount={pos.discount}
           discountAmount={pos.discountAmount}
+          staffDiscountAmount={pos.staffDiscountAmount}
           finalTotal={pos.finalTotal}
+          isStaffSale={pos.selectedCustomerType === "staff"}
         />
 
         <button
           onClick={() => pos.setIsCheckoutOpen(true)}
-          disabled={pos.cart.length === 0 || !pos.selectedVehicle || pos.isPaying}
+          disabled={!pos.canCheckout || pos.isPaying}
           className="mt-4 bg-(--accent) hover:(--accent-hover) disabled:bg-slate-700 disabled:text-slate-400 text-white py-3 rounded-lg shadow-lg font-semibold"
         >
           {pos.isPaying ? "Processing..." : "Pay (Card)"}
         </button>
 
-        {!pos.selectedVehicle && (
+        {!pos.canCheckout && pos.cart.length > 0 && !pos.selectedVehicle && (
           <p className="mt-2 text-xs text-slate-400 text-center">
-            Select a vehicle to add mods.
+            Select a vehicle to checkout vehicle mods (service items can checkout without a vehicle).
           </p>
         )}
 

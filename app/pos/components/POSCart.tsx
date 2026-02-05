@@ -29,7 +29,9 @@ export default function POSCart({
   originalTotal,
   discount,
   discountAmount,
+  staffDiscountAmount,
   finalTotal,
+  isStaffSale,
 }: {
   cart: CartItem[];
   updateQty: (id: string, amt: number) => void;
@@ -37,7 +39,9 @@ export default function POSCart({
   originalTotal: number;
   discount: Discount;
   discountAmount: number;
+  staffDiscountAmount: number;
   finalTotal: number; // already rounded up by usePOS
+  isStaffSale: boolean;
 }) {
   return (
     <>
@@ -52,8 +56,8 @@ export default function POSCart({
               key={item.id}
               className="p-3 border border-slate-700 rounded-lg flex justify-between items-center bg-slate-800"
             >
-              <div>
-                <p className="font-semibold text-slate-50">{item.name}</p>
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-50 truncate">{item.name}</p>
                 <p className="text-slate-300 text-sm">${fmtMoney2(item.price)}</p>
               </div>
 
@@ -65,9 +69,7 @@ export default function POSCart({
                   -
                 </button>
 
-                <span className="font-semibold text-slate-50">
-                  {item.quantity}
-                </span>
+                <span className="font-semibold text-slate-50">{item.quantity}</span>
 
                 <button
                   className="px-3 py-1 bg-slate-700 rounded hover:bg-slate-600"
@@ -88,7 +90,7 @@ export default function POSCart({
         )}
       </div>
 
-      <div className="border-t border-slate-700 pt-4 mt-4">
+      <div className="border-t border-slate-700 pt-4 mt-4 space-y-1">
         <p className="text-lg font-semibold text-slate-300">
           Subtotal: ${fmtMoney2(originalTotal)}
         </p>
@@ -99,7 +101,12 @@ export default function POSCart({
           </p>
         )}
 
-        {/* ✅ Total is whole dollars (already rounded up) */}
+        {isStaffSale && staffDiscountAmount > 0 && (
+          <p className="text-lg font-semibold text-emerald-300">
+            Staff: -${fmtMoney2(staffDiscountAmount)} (25%)
+          </p>
+        )}
+
         <p className="text-xl font-bold text-slate-50 mt-1">
           Total: ${fmtMoney0(finalTotal)}
         </p>
