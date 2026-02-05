@@ -20,7 +20,6 @@ export default function POSClient({
 
   return (
     <div className="flex h-screen bg-transparent text-slate-50">
-      {/* LEFT SIDE – VEHICLES (left column) + MODS (right column) */}
       <div className="flex-1">
         <POSItems
           vehicles={pos.filteredVehicles}
@@ -34,7 +33,6 @@ export default function POSClient({
         />
       </div>
 
-      {/* RIGHT SIDE – CART + CUSTOMER + CHECKOUT */}
       <div className="w-95 bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
         <button
           onClick={() => pos.setShowCustomerModal(true)}
@@ -49,6 +47,20 @@ export default function POSClient({
           isBlacklisted={pos.isBlacklisted}
           customerType={pos.selectedCustomerType}
         />
+
+        {/* ✅ Plate entry just under customer */}
+        <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
+          <h3 className="text-sm font-semibold text-slate-300 mb-2">Plate</h3>
+          <input
+            value={pos.plate}
+            onChange={(e) => pos.setPlate(e.target.value)}
+            placeholder="e.g. ABC123"
+            className="w-full p-2 rounded bg-slate-900 border border-slate-700 text-slate-50 placeholder:text-slate-500"
+          />
+          <p className="text-xs text-slate-400 mt-2">
+            Logged on the job after checkout.
+          </p>
+        </div>
 
         <POSCart
           cart={pos.cart}
@@ -70,12 +82,6 @@ export default function POSClient({
           {pos.isPaying ? "Processing..." : "Pay (Card)"}
         </button>
 
-        {!pos.canCheckout && pos.cart.length > 0 && !pos.selectedVehicle && (
-          <p className="mt-2 text-xs text-slate-400 text-center">
-            Select a vehicle to checkout vehicle mods (service items can checkout without a vehicle).
-          </p>
-        )}
-
         {pos.isBlacklisted && (
           <p className="mt-2 text-xs text-red-400 text-center font-semibold">
             This customer is currently blacklisted — checkout is blocked.
@@ -83,7 +89,6 @@ export default function POSClient({
         )}
       </div>
 
-      {/* ADD CUSTOMER MODAL */}
       {pos.showCustomerModal && (
         <AddCustomerModal
           onClose={() => pos.setShowCustomerModal(false)}
@@ -91,7 +96,6 @@ export default function POSClient({
         />
       )}
 
-      {/* EDIT CUSTOMER MODAL */}
       {pos.showEditCustomerModal && (
         <EditCustomerModal
           onClose={() => pos.setShowEditCustomerModal(false)}
@@ -99,7 +103,6 @@ export default function POSClient({
         />
       )}
 
-      {/* CHECKOUT MODAL */}
       {pos.isCheckoutOpen && (
         <POSCheckoutModal
           finalTotal={pos.finalTotal}

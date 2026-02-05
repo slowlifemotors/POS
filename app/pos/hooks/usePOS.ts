@@ -31,21 +31,19 @@ export type ModNode = {
 };
 
 export type CartItem = {
-  id: string; // stable cart line id
-  name: string; // display name
-  price: number; // computed unit SALE price
+  id: string;
+  name: string;
+  price: number;
   quantity: number;
 
-  // REQUIRED metadata
-  vehicle_id: number; // for services this is SERVICE_VEHICLE_ID
+  vehicle_id: number;
   mod_id: string;
   mod_name: string;
-  computed_price: number; // computed unit SALE price (explicitly stored)
+  computed_price: number;
   pricing_type: ModPricingType;
   pricing_value: number;
 
-  // flags
-  is_service_item?: boolean; // repair/repair kit/screwdriver without vehicle
+  is_service_item?: boolean;
 };
 
 export type Customer = {
@@ -103,12 +101,6 @@ function flattenMods(root: ModNode | null) {
   return map;
 }
 
-/**
- * Pricing Rule:
- * - percentage pricing_value is COST (% of vehicle base price)
- * - markup is 100% => sale price = cost * 2
- * - flat pricing_value is already the SALE price
- */
 function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
   if (!mod.pricing_type || mod.pricing_value == null) return null;
 
@@ -122,19 +114,10 @@ function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
   return roundToCents(Number(mod.pricing_value));
 }
 
-/**
- * ✅ Items allowed to be sold without selecting a vehicle
- * (case-insensitive match on mod name)
- */
 const STANDALONE_MOD_NAMES = new Set(
   ["repair", "repair kit", "screwdriver"].map((s) => s.toLowerCase().trim())
 );
 
-/**
- * ✅ MUST be a real vehicles row id in your DB.
- * Create a vehicle like: "Service / No Vehicle / Repairs" with base_price=0
- * and set its ID here.
- */
 const SERVICE_VEHICLE_ID = 1;
 
 export default function usePOS({ staffId }: UsePOSArgs) {
@@ -154,14 +137,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-
-  // track whether selected person was staff (drives staff pricing)
   const [selectedCustomerType, setSelectedCustomerType] = useState<SelectedCustomerType>(null);
 
   const [discount, setDiscount] = useState<Discount | null>(null);
   const [isBlacklisted, setIsBlacklisted] = useState(false);
 
   const [isPaying, setIsPaying] = useState(false);
+
+  // ✅ NEW: plate entry (shown under customer, sent to order, shown in jobs)
+  const [plate, setPlate] = useState("");
 
   // -------------------------
   // LOAD VEHICLES
@@ -216,7 +200,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // LOAD TABS (kept for now)
+  // LOAD TABS
   // -------------------------
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
@@ -233,7 +217,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   // -------------------------
   // FILTER VEHICLES
-  // includes active + inactive (you hide list until searched in UI)
   // -------------------------
   const filteredVehicles = useMemo(() => {
     const s = searchTerm.trim().toLowerCase();
@@ -260,8 +243,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const modsById = useMemo(() => flattenMods(modsRoot), [modsRoot]);
 
   // -------------------------
-  // SELECT VEHICLE (clears cart)
-  // NOTE: if you want vehicle selection to NOT clear service items, say so
+  // SELECT VEHICLE
   // -------------------------
   const selectVehicle = (v: Vehicle) => {
     setSelectedVehicle(v);
@@ -277,7 +259,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   // -------------------------
   // ADD MOD TO CART
-  // ✅ Now supports standalone items without selecting a vehicle
   // -------------------------
   const addModToCart = (modId: string) => {
     const mod = modsById.get(modId);
@@ -295,14 +276,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const modNameKey = String(mod.name ?? "").toLowerCase().trim();
     const isStandaloneAllowed = STANDALONE_MOD_NAMES.has(modNameKey);
 
-    // If no vehicle selected -> only allow specific standalone items
     if (!selectedVehicle) {
       if (!isStandaloneAllowed) {
         alert("Select a vehicle first.");
         return;
       }
 
-      // Standalone items must be flat priced (no base vehicle to compute percentage)
       if (pt !== "flat") {
         alert(`"${mod.name}" must be flat-priced to sell without a vehicle.`);
         return;
@@ -340,7 +319,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // Normal vehicle flow
     const computedSale = computeModPrice(mod, selectedVehicle.base_price);
     if (computedSale == null) {
       alert(`"${mod.name}" has invalid pricing. Configure it in /mods.`);
@@ -394,9 +372,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // TOTALS
-  // RULE: POS final total is ALWAYS rounded UP to the next full dollar.
-  // ✅ Staff customer: cart × 0.75
+  // TOTALS (staff = x0.75)
   // -------------------------
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -451,7 +427,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   // -------------------------
   // REFRESH CUSTOMER
-  // (only meaningful for real customers)
   // -------------------------
   const refreshCustomer = async () => {
     if (!selectedCustomer) return;
@@ -473,20 +448,11 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
   };
 
-  // -------------------------
-  // CHECKOUT VALIDATION HELPERS
-  // -------------------------
   const cartHasVehicleItems = cart.some((c) => !c.is_service_item);
-  const cartHasServiceItems = cart.some((c) => c.is_service_item);
-
-  // If cart has ANY vehicle items, you must have selectedVehicle.
-  const canCheckout =
-    cart.length > 0 && (!cartHasVehicleItems || (cartHasVehicleItems && selectedVehicle != null));
+  const canCheckout = cart.length > 0 && (!cartHasVehicleItems || (cartHasVehicleItems && selectedVehicle != null));
 
   // -------------------------
   // CREATE ORDER (checkout)
-  // ✅ Supports service-only orders (no vehicle selected)
-  // ✅ Staff selection sends customer_id = null
   // -------------------------
   const createOrder = async (note: string) => {
     if (isPaying) return;
@@ -506,7 +472,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // Determine which vehicle the order should use
     const orderVehicleId = selectedVehicle ? selectedVehicle.id : SERVICE_VEHICLE_ID;
     const orderVehicleBasePrice = selectedVehicle ? Number(selectedVehicle.base_price ?? 0) : 0;
 
@@ -515,10 +480,8 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     try {
       const payload = {
         staff_id: staffId,
-
         vehicle_id: orderVehicleId,
 
-        // ✅ If staff selected as customer, do NOT write a customer_id
         customer_id:
           selectedCustomerType === "staff"
             ? null
@@ -527,15 +490,16 @@ export default function usePOS({ staffId }: UsePOSArgs) {
               : null,
 
         discount_id: discount ? discount.id : null,
-
         customer_is_staff: selectedCustomerType === "staff",
 
         vehicle_base_price: orderVehicleBasePrice,
 
+        // ✅ plate added (stored in orders.plate)
+        plate: plate.trim() || null,
+
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount + staffDiscountAmount),
-
-        total, // whole dollars
+        total,
 
         note: note?.trim() || null,
 
@@ -563,13 +527,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         return;
       }
 
-      // Reset POS state for next sale
       setCart([]);
       setIsCheckoutOpen(false);
       setSelectedCustomer(null);
       setSelectedCustomerType(null);
       setDiscount(null);
       setSelectedVehicle(null);
+
+      // ✅ clear plate after successful sale
+      setPlate("");
 
       alert(`Sale completed! Order ID: ${json.order_id}`);
     } finally {
@@ -578,7 +544,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   return {
-    // data
     vehicles,
     filteredVehicles,
     selectedVehicle,
@@ -601,7 +566,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     isPaying,
     canCheckout,
 
-    // actions
+    // ✅ plate API
+    plate,
+    setPlate,
+
     setSearchTerm,
     selectVehicle,
     clearVehicle,
@@ -615,7 +583,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     handleSelectCustomer,
     refreshCustomer,
 
-    // new
     createOrder,
     reloadModsTree: loadModsTree,
   };

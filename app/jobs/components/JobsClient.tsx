@@ -8,7 +8,7 @@ type SessionStaff = { id: number; username: string; role: string };
 
 type OrderRow = {
   id: string;
-  status: string; // paid | void | open
+  status: string;
   vehicle_id: number;
   staff_id: number;
   customer_id: number | null;
@@ -17,6 +17,7 @@ type OrderRow = {
   total: number;
   note: string | null;
   created_at: string;
+  plate?: string | null; // ✅ NEW
   voided_at?: string | null;
   void_reason?: string | null;
   voided_by_staff_id?: number | null;
@@ -72,15 +73,8 @@ export default function JobsClient({
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  // track which orders are expanded
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
   const safeOrders = Array.isArray(orders) ? orders : [];
   const shownCount = useMemo(() => safeOrders.length, [safeOrders]);
-
-  function toggleExpanded(orderId: string) {
-    setExpanded((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
-  }
 
   async function voidOrder(orderId: string) {
     const reason = prompt("Reason for voiding this entire job?", "Voided");
@@ -181,16 +175,20 @@ export default function JobsClient({
 
                 const orderLines = Array.isArray(linesByOrderId[o.id]) ? linesByOrderId[o.id] : [];
                 const orderIsVoided = String(o.status ?? "").toLowerCase() === "void";
-                const isOpen = Boolean(expanded[o.id]);
-
-                const activeLinesCount = orderLines.filter((l) => !l.is_voided).length;
-                const voidedLinesCount = orderLines.filter((l) => Boolean(l.is_voided)).length;
 
                 return (
                   <div key={o.id} className="p-4">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                       <div className="space-y-1">
                         <p className="text-lg font-semibold text-slate-50">{vName}</p>
+
+                        {/* ✅ Plate displayed under customer */}
+                        {o.plate && (
+                          <p className="text-sm text-slate-300">
+                            Plate: <span className="font-semibold text-slate-100">{o.plate}</span>
+                          </p>
+                        )}
+
                         <p className="text-sm text-slate-300">
                           Staff: <span className="font-semibold text-slate-100">{sName}</span>
                           {" · "}
@@ -237,30 +235,12 @@ export default function JobsClient({
                       </div>
                     </div>
 
-                    {/* Collapsible mods section */}
                     <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(o.id)}
-                        className="w-full px-3 py-2 border-b border-slate-800 flex items-center justify-between text-left hover:bg-slate-900/40"
-                      >
-                        <div className="text-sm font-semibold text-slate-200">
-                          Mods applied
-                          <span className="ml-2 text-xs text-slate-400 font-normal">
-                            ({activeLinesCount} active{voidedLinesCount ? `, ${voidedLinesCount} voided` : ""})
-                          </span>
-                        </div>
+                      <div className="px-3 py-2 border-b border-slate-800 text-sm font-semibold text-slate-200">
+                        Mods applied
+                      </div>
 
-                        <div className="text-xs text-slate-400">
-                          {isOpen ? "Hide" : "Show"} <span className="ml-1">{isOpen ? "▲" : "▼"}</span>
-                        </div>
-                      </button>
-
-                      {!isOpen ? (
-                        <div className="px-3 py-3 text-sm text-slate-400">
-                          Collapsed. Click <span className="text-slate-200 font-semibold">Show</span> to view mods.
-                        </div>
-                      ) : orderLines.length === 0 ? (
+                      {orderLines.length === 0 ? (
                         <div className="p-3 text-sm text-slate-400">No lines found.</div>
                       ) : (
                         <div className="divide-y divide-slate-800">
@@ -275,11 +255,7 @@ export default function JobsClient({
                                 className="px-3 py-2 text-sm flex items-start justify-between gap-4"
                               >
                                 <div className="min-w-0">
-                                  <p
-                                    className={`text-slate-100 truncate ${
-                                      lineIsVoided ? "line-through opacity-60" : ""
-                                    }`}
-                                  >
+                                  <p className={`text-slate-100 truncate ${lineIsVoided ? "line-through opacity-60" : ""}`}>
                                     {l.mod_name}
                                   </p>
 
@@ -298,7 +274,7 @@ export default function JobsClient({
                                 <div className="text-right shrink-0 space-y-2">
                                   <div>
                                     <p className="text-slate-200">
-                                      {l.quantity} × ${fmtMoney(l.unit_price)}
+                                      {l.quantity} × ${fmtMoney(Number(l.unit_price))}
                                     </p>
                                     <p className="text-slate-400 text-xs">
                                       Line: ${fmtMoney(Number(l.unit_price) * Number(l.quantity))}
@@ -310,15 +286,6 @@ export default function JobsClient({
                                     disabled={!canVoidLine || busyKey === `line:${lineId}`}
                                     onClick={() => voidLine(o.id, lineId)}
                                     className="px-3 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title={
-                                      !lineId
-                                        ? "Missing line id (check order_lines select includes id)"
-                                        : orderIsVoided
-                                        ? "Order is voided"
-                                        : lineIsVoided
-                                        ? "Line already voided"
-                                        : "Void this item"
-                                    }
                                   >
                                     {busyKey === `line:${lineId}` ? "Voiding..." : "Void Item"}
                                   </button>
@@ -336,9 +303,7 @@ export default function JobsClient({
           )}
         </div>
 
-        <p className="text-xs text-slate-500 mt-6">
-          Manager+ can void items or entire jobs. Voids are audit-tracked.
-        </p>
+        <p className="text-xs text-slate-500 mt-6">Manager+ can void items or entire jobs. Voids are audit-tracked.</p>
       </div>
     </div>
   );

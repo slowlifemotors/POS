@@ -17,7 +17,7 @@ function isManagerOrAbove(role: unknown) {
 
 type OrderRow = {
   id: string;
-  status: string; // paid | void | open
+  status: string;
   vehicle_id: number;
   staff_id: number;
   customer_id: number | null;
@@ -26,6 +26,7 @@ type OrderRow = {
   total: number;
   note: string | null;
   created_at: string;
+  plate?: string | null; // ✅ NEW
   voided_at?: string | null;
   void_reason?: string | null;
   voided_by_staff_id?: number | null;
@@ -54,7 +55,7 @@ export default async function JobsPage() {
   const { data: orders, error: ordersErr } = await supabaseServer
     .from("orders")
     .select(
-      "id, status, vehicle_id, staff_id, customer_id, subtotal, discount_amount, total, note, created_at, voided_at, void_reason, voided_by_staff_id"
+      "id, status, vehicle_id, staff_id, customer_id, subtotal, discount_amount, total, note, created_at, plate, voided_at, void_reason, voided_by_staff_id"
     )
     .in("status", ["paid", "void"])
     .order("created_at", { ascending: false })
