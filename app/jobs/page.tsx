@@ -20,13 +20,17 @@ type OrderRow = {
   status: string;
   vehicle_id: number;
   staff_id: number;
+
   customer_id: number | null;
+  staff_customer_id?: number | null; // ✅ NEW
+
   subtotal: number;
   discount_amount: number;
   total: number;
   note: string | null;
   created_at: string;
-  plate?: string | null; // ✅ NEW
+  plate?: string | null;
+
   voided_at?: string | null;
   void_reason?: string | null;
   voided_by_staff_id?: number | null;
@@ -55,7 +59,7 @@ export default async function JobsPage() {
   const { data: orders, error: ordersErr } = await supabaseServer
     .from("orders")
     .select(
-      "id, status, vehicle_id, staff_id, customer_id, subtotal, discount_amount, total, note, created_at, plate, voided_at, void_reason, voided_by_staff_id"
+      "id, status, vehicle_id, staff_id, customer_id, staff_customer_id, subtotal, discount_amount, total, note, created_at, plate, voided_at, void_reason, voided_by_staff_id"
     )
     .in("status", ["paid", "void"])
     .order("created_at", { ascending: false })
@@ -99,7 +103,14 @@ export default async function JobsPage() {
     vehicleNameById.set(Number(v.id), label);
   });
 
-  const staffIds = Array.from(new Set(safeOrders.map((o) => o.staff_id)));
+  // ✅ include staff_customer_id in staff name map lookup too
+  const staffIds = Array.from(
+    new Set([
+      ...safeOrders.map((o) => o.staff_id),
+      ...safeOrders.map((o) => Number(o.staff_customer_id ?? 0)).filter((n) => n > 0),
+    ])
+  );
+
   const { data: staffRows, error: staffErr } =
     staffIds.length === 0
       ? { data: [], error: null as any }

@@ -44,10 +44,7 @@ function normalizePlate(v: unknown) {
   const p = v.trim();
   if (!p) return null;
 
-  // Keep it simple: uppercase, collapse whitespace
   const cleaned = p.replace(/\s+/g, " ").toUpperCase();
-
-  // Optional: cap length to avoid junk
   if (cleaned.length > 20) return cleaned.slice(0, 20);
 
   return cleaned;
@@ -82,7 +79,7 @@ export async function GET(req: Request) {
     let query = supabaseServer
       .from("orders")
       .select(
-        "id, status, vehicle_id, staff_id, customer_id, discount_id, plate, subtotal, discount_amount, total, note, created_at, updated_at, voided_at, void_reason, voided_by_staff_id"
+        "id, status, vehicle_id, staff_id, customer_id, staff_customer_id, discount_id, customer_is_staff, plate, subtotal, discount_amount, total, note, created_at, updated_at, voided_at, void_reason, voided_by_staff_id"
       )
       .order("created_at", { ascending: false })
       .limit(200);
@@ -140,6 +137,12 @@ export async function POST(req: Request) {
         : toNumber(body.discount_id);
 
     const customer_is_staff = Boolean(body?.customer_is_staff);
+
+    // ✅ NEW: staff customer id (only meaningful if customer_is_staff=true)
+    const staff_customer_id =
+      body?.staff_customer_id === null || body?.staff_customer_id === undefined
+        ? null
+        : toNumber(body.staff_customer_id);
 
     const vehicle_base_price = toNumber(body?.vehicle_base_price);
 
@@ -215,6 +218,16 @@ export async function POST(req: Request) {
       }
     }
 
+    // ✅ If customer_is_staff is true, require staff_customer_id
+    if (customer_is_staff) {
+      if (!staff_customer_id || staff_customer_id <= 0) {
+        return NextResponse.json(
+          { error: "staff_customer_id is required for staff sales" },
+          { status: 400 }
+        );
+      }
+    }
+
     // -------------------------
     // SERVER-TRUSTED TOTALS
     // -------------------------
@@ -244,11 +257,14 @@ export async function POST(req: Request) {
           status: "paid",
           vehicle_id,
           staff_id,
-          customer_id,
-          discount_id: null,
-          customer_is_staff: true,
-          vehicle_base_price,
 
+          // ✅ staff customer tracking
+          customer_id: null,
+          staff_customer_id,
+          customer_is_staff: true,
+
+          discount_id: null,
+          vehicle_base_price,
           plate,
 
           subtotal: computedSubtotal,
@@ -319,16 +335,14 @@ export async function POST(req: Request) {
         vehicle_id,
         staff_id,
         customer_id,
+        staff_customer_id: null,
         discount_id: finalDiscountId,
         customer_is_staff: false,
         vehicle_base_price,
-
         plate,
-
         subtotal: computedSubtotal,
         discount_amount: computedDiscountAmount,
         total: computedTotal,
-
         note,
       })
       .select("id")
@@ -348,10 +362,7 @@ export async function POST(req: Request) {
       mod_id: toUuid(l.mod_id),
       mod_name: String(l.mod_name ?? "").trim(),
       quantity: toNumber(l.quantity, 1),
-
-      // store as unit_price in DB
       unit_price: toNumber(l.computed_price),
-
       pricing_type: l.pricing_type,
       pricing_value: toNumber(l.pricing_value),
     }));
@@ -360,10 +371,7 @@ export async function POST(req: Request) {
 
     if (linesErr) {
       console.error("POST /api/orders lines insert error:", linesErr);
-
-      // Best-effort cleanup
       await supabaseServer.from("orders").delete().eq("id", order_id);
-
       return NextResponse.json({ error: "Failed to create order lines" }, { status: 500 });
     }
 

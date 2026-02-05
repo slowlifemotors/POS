@@ -339,8 +339,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         alert("Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, or Screwdriver.");
         return;
       }
-
-      // If it's inactive and not cosmetics, percentage mods are implicitly blocked by above.
     }
 
     const modNameKey = String(mod.name ?? "").toLowerCase().trim();
@@ -560,6 +558,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const orderVehicleId = selectedVehicle ? selectedVehicle.id : serviceVehicleId!;
     const orderVehicleBasePrice = selectedVehicle ? Number(selectedVehicle.base_price ?? 0) : 0;
 
+    // ✅ IMPORTANT: if staff is selected as customer, persist staff_customer_id
+    const staffCustomerId =
+      selectedCustomerType === "staff" && selectedCustomer
+        ? Math.abs(Number(selectedCustomer.id)) // staff pseudo id is negative => real staff id
+        : null;
+
     setIsPaying(true);
 
     try {
@@ -567,16 +571,18 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         staff_id: staffId,
         vehicle_id: orderVehicleId,
 
+        // customer is staff => customer_id must be null
         customer_id:
           selectedCustomerType === "staff" ? null : selectedCustomer ? selectedCustomer.id : null,
 
-        discount_id: discount ? discount.id : null,
+        staff_customer_id: staffCustomerId, // ✅ NEW (used for jobs display + commission exclusion)
         customer_is_staff: selectedCustomerType === "staff",
 
+        discount_id: discount ? discount.id : null,
         vehicle_base_price: orderVehicleBasePrice,
 
-        // ✅ IMPORTANT: match DB + API contract naming
-        vehicle_plate: plate.trim() || null,
+        // ✅ FIX: API expects "plate", not "vehicle_plate"
+        plate: plate.trim() || null,
 
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount + staffDiscountAmount),
@@ -584,8 +590,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
         note: note?.trim() || null,
 
+        // ✅ lines must all match order vehicle id (your API enforces this)
         lines: cart.map((c) => ({
-          vehicle_id: c.is_service_item ? orderVehicleId : c.vehicle_id,
+          vehicle_id: orderVehicleId,
           mod_id: c.mod_id,
           mod_name: c.mod_name,
           quantity: c.quantity,

@@ -50,6 +50,9 @@ async function getHours(staff_id: number, start: Date, end: Date) {
    - Checkout price is doubled (profit is exactly half of what customer pays)
    - Discounts apply to whole sale -> profit is half of FINAL TOTAL
    => profit = order.total / 2
+
+   IMPORTANT:
+   - Staff sales (customer_is_staff=true) MUST NOT count toward commission
 --------------------------------------------------------- */
 async function getCommission(
   staff_id: number,
@@ -57,12 +60,12 @@ async function getCommission(
   start: Date,
   end: Date
 ) {
-  // Load all PAID orders for staff in period
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, total, status")
+    .select("id, total, status, customer_is_staff")
     .eq("staff_id", staff_id)
     .eq("status", "paid")
+    .eq("customer_is_staff", false) // ✅ exclude staff sales
     .gte("created_at", start.toISOString())
     .lte("created_at", end.toISOString());
 
@@ -75,11 +78,10 @@ async function getCommission(
     return { rate: commission_rate, profit: 0, value: 0 };
   }
 
-  // Profit is half of what customer paid (after discount)
   let totalProfit = 0;
 
   for (const o of orders) {
-    const total = Number(o.total || 0);
+    const total = Number((o as any).total || 0);
     if (total <= 0) continue;
     totalProfit += total / 2;
   }
@@ -115,7 +117,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing staff_id" }, { status: 400 });
   }
 
-  // Load staff role + hourly_rate + commission_rate from roles
   const { data: staffRow } = await supabase
     .from("staff")
     .select("role_id")
@@ -135,14 +136,11 @@ export async function GET(req: Request) {
   const hourly_rate = Number(roleRow?.hourly_rate ?? 0);
   const commission_rate = Number(roleRow?.commission_rate ?? 0);
 
-  // Pay period
   const { period_start, period_end } = await getPayPeriod(staff_id);
 
-  // Hours worked
   const hours = await getHours(staff_id, period_start, period_end);
   const hourly_pay = hours * hourly_rate;
 
-  // Commission (profit-based per game rules)
   const commission = await getCommission(
     staff_id,
     commission_rate,

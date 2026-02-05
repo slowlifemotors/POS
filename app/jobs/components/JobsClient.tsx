@@ -11,13 +11,16 @@ type OrderRow = {
   status: string;
   vehicle_id: number;
   staff_id: number;
+
   customer_id: number | null;
+  staff_customer_id?: number | null; // ✅ NEW
+
   subtotal: number;
   discount_amount: number;
   total: number;
   note: string | null;
   created_at: string;
-  plate?: string | null; // ✅ NEW
+  plate?: string | null;
   voided_at?: string | null;
   void_reason?: string | null;
   voided_by_staff_id?: number | null;
@@ -73,7 +76,6 @@ export default function JobsClient({
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  // ✅ NEW: collapse/expand mods per order
   const [openLines, setOpenLines] = useState<Record<string, boolean>>({});
 
   const safeOrders = Array.isArray(orders) ? orders : [];
@@ -175,10 +177,16 @@ export default function JobsClient({
               {safeOrders.map((o) => {
                 const vName = vehicleNameById[String(o.vehicle_id)] ?? `Vehicle #${o.vehicle_id}`;
                 const sName = staffNameById[String(o.staff_id)] ?? `Staff #${o.staff_id}`;
+
+                // ✅ FIX: if staff_customer_id exists, display staff name instead of Walk-in
+                const staffCustId = o.staff_customer_id ? Number(o.staff_customer_id) : null;
+
                 const cName =
-                  o.customer_id == null
-                    ? "Walk-in"
-                    : customerNameById[String(o.customer_id)] ?? `Customer #${o.customer_id}`;
+                  staffCustId && staffCustId > 0
+                    ? staffNameById[String(staffCustId)] ?? `Staff #${staffCustId}`
+                    : o.customer_id == null
+                      ? "Walk-in"
+                      : customerNameById[String(o.customer_id)] ?? `Customer #${o.customer_id}`;
 
                 const orderLines = Array.isArray(linesByOrderId[o.id]) ? linesByOrderId[o.id] : [];
                 const orderIsVoided = String(o.status ?? "").toLowerCase() === "void";
@@ -195,7 +203,6 @@ export default function JobsClient({
                       <div className="space-y-1">
                         <p className="text-lg font-semibold text-slate-50">{vName}</p>
 
-                        {/* ✅ Plate displayed under customer */}
                         {o.plate && (
                           <p className="text-sm text-slate-300">
                             Plate: <span className="font-semibold text-slate-100">{o.plate}</span>
@@ -206,6 +213,11 @@ export default function JobsClient({
                           Staff: <span className="font-semibold text-slate-100">{sName}</span>
                           {" · "}
                           Customer: <span className="font-semibold text-slate-100">{cName}</span>
+                          {staffCustId ? (
+                            <span className="ml-2 text-xs px-2 py-0.5 rounded bg-slate-700 text-slate-200">
+                              Staff
+                            </span>
+                          ) : null}
                         </p>
 
                         <p className="text-xs text-slate-500">
@@ -250,7 +262,6 @@ export default function JobsClient({
                       </div>
                     </div>
 
-                    {/* ✅ Collapsible "Mods applied" (dropdown-style) */}
                     <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 overflow-hidden">
                       <button
                         type="button"
@@ -268,9 +279,7 @@ export default function JobsClient({
                       </button>
 
                       {!isOpen ? (
-                        <div className="px-3 py-3 text-sm text-slate-400">
-                          Click to expand.
-                        </div>
+                        <div className="px-3 py-3 text-sm text-slate-400">Click to expand.</div>
                       ) : orderLines.length === 0 ? (
                         <div className="p-3 text-sm text-slate-400">No lines found.</div>
                       ) : (
