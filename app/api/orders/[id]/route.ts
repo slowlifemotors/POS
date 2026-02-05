@@ -44,7 +44,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const { data: order, error: orderErr } = await supabaseServer
       .from("orders")
       .select(
-        "id, status, vehicle_id, staff_id, customer_id, discount_id, vehicle_base_price, subtotal, discount_amount, total, note, created_at, updated_at"
+        "id, status, vehicle_id, staff_id, customer_id, discount_id, customer_is_staff, plate, vehicle_base_price, subtotal, discount_amount, total, note, created_at, updated_at"
       )
       .eq("id", orderId)
       .single();
@@ -56,7 +56,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     const { data: lines, error: linesErr } = await supabaseServer
       .from("order_lines")
       .select(
-        "id, order_id, vehicle_id, mod_id, mod_name, quantity, unit_price, pricing_type, pricing_value, created_at"
+        "id, order_id, vehicle_id, mod_id, mod_name, quantity, unit_price, pricing_type, pricing_value, created_at, is_voided, void_reason, voided_at"
       )
       .eq("order_id", orderId)
       .order("created_at", { ascending: true });
@@ -104,7 +104,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       .update({ status })
       .eq("id", orderId)
       .select(
-        "id, status, vehicle_id, staff_id, customer_id, discount_id, vehicle_base_price, subtotal, discount_amount, total, note, created_at, updated_at"
+        "id, status, vehicle_id, staff_id, customer_id, discount_id, customer_is_staff, plate, vehicle_base_price, subtotal, discount_amount, total, note, created_at, updated_at"
       )
       .single();
 

@@ -39,6 +39,20 @@ function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+function normalizePlate(v: unknown) {
+  if (typeof v !== "string") return null;
+  const p = v.trim();
+  if (!p) return null;
+
+  // Keep it simple: uppercase, collapse whitespace
+  const cleaned = p.replace(/\s+/g, " ").toUpperCase();
+
+  // Optional: cap length to avoid junk
+  if (cleaned.length > 20) return cleaned.slice(0, 20);
+
+  return cleaned;
+}
+
 async function requireSession(req: Request) {
   const cookieHeader = req.headers.get("cookie") ?? "";
   (globalThis as any).__session_cookie_header = cookieHeader;
@@ -68,7 +82,7 @@ export async function GET(req: Request) {
     let query = supabaseServer
       .from("orders")
       .select(
-        "id, status, vehicle_id, staff_id, customer_id, discount_id, subtotal, discount_amount, total, note, created_at, updated_at, voided_at, void_reason, voided_by_staff_id"
+        "id, status, vehicle_id, staff_id, customer_id, discount_id, plate, subtotal, discount_amount, total, note, created_at, updated_at, voided_at, void_reason, voided_by_staff_id"
       )
       .order("created_at", { ascending: false })
       .limit(200);
@@ -101,7 +115,7 @@ export async function GET(req: Request) {
  * IMPORTANT:
  * - Server recalculates subtotal/discount/total to satisfy DB constraint.
  * - total is ALWAYS CEILING(subtotal - discount_amount).
- * - if customer_is_staff === true, discount is forced OFF (discount_id null, discount_amount 0).
+ * - if customer_is_staff === true, price is forced to CART * 0.75 (25% off staff sale)
  */
 export async function POST(req: Request) {
   const session = await requireSession(req);
@@ -128,6 +142,8 @@ export async function POST(req: Request) {
     const customer_is_staff = Boolean(body?.customer_is_staff);
 
     const vehicle_base_price = toNumber(body?.vehicle_base_price);
+
+    const plate = normalizePlate(body?.plate);
 
     const note =
       typeof body?.note === "string" && body.note.trim() ? body.note.trim() : null;
@@ -213,10 +229,68 @@ export async function POST(req: Request) {
     let discountPercent = 0;
     let finalDiscountId: number | null = discount_id;
 
-    // Enforce: staff sale means no discounts
+    // Staff sale: force staff pricing (cart * 0.75) and do NOT allow other discounts
     if (customer_is_staff) {
       finalDiscountId = null;
-    } else if (finalDiscountId) {
+      discountPercent = 0;
+
+      const staffSubtotal = roundToCents(computedSubtotal * 0.75);
+      const staffDiscountAmount = roundToCents(computedSubtotal - staffSubtotal);
+      const staffTotal = Math.ceil(roundToCents(computedSubtotal - staffDiscountAmount));
+
+      const { data: order, error: orderErr } = await supabaseServer
+        .from("orders")
+        .insert({
+          status: "paid",
+          vehicle_id,
+          staff_id,
+          customer_id,
+          discount_id: null,
+          customer_is_staff: true,
+          vehicle_base_price,
+
+          plate,
+
+          subtotal: computedSubtotal,
+          discount_amount: staffDiscountAmount,
+          total: staffTotal,
+
+          note,
+        })
+        .select("id")
+        .single();
+
+      if (orderErr || !order) {
+        console.error("POST /api/orders order insert error:", orderErr);
+        return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
+      }
+
+      const order_id = order.id as string;
+
+      const lineRows = lines.map((l) => ({
+        order_id,
+        vehicle_id,
+        mod_id: toUuid(l.mod_id),
+        mod_name: String(l.mod_name ?? "").trim(),
+        quantity: toNumber(l.quantity, 1),
+        unit_price: toNumber(l.computed_price),
+        pricing_type: l.pricing_type,
+        pricing_value: toNumber(l.pricing_value),
+      }));
+
+      const { error: linesErr } = await supabaseServer.from("order_lines").insert(lineRows);
+
+      if (linesErr) {
+        console.error("POST /api/orders lines insert error:", linesErr);
+        await supabaseServer.from("orders").delete().eq("id", order_id);
+        return NextResponse.json({ error: "Failed to create order lines" }, { status: 500 });
+      }
+
+      return NextResponse.json({ order_id }, { status: 200 });
+    }
+
+    // Normal discount flow
+    if (finalDiscountId) {
       const { data: disc, error: discErr } = await supabaseServer
         .from("discounts")
         .select("percent")
@@ -246,8 +320,10 @@ export async function POST(req: Request) {
         staff_id,
         customer_id,
         discount_id: finalDiscountId,
-        customer_is_staff,
+        customer_is_staff: false,
         vehicle_base_price,
+
+        plate,
 
         subtotal: computedSubtotal,
         discount_amount: computedDiscountAmount,
