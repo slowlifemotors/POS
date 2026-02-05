@@ -114,15 +114,30 @@ function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
   return roundToCents(Number(mod.pricing_value));
 }
 
+/**
+ * Placeholder vehicle detector:
+ * manufacturer: N/A
+ * model: No Vehicle
+ * base_price: 0
+ * category: N/A
+ */
+function isNoVehiclePlaceholder(v: Vehicle) {
+  const m = (v.manufacturer ?? "").trim().toLowerCase();
+  const model = (v.model ?? "").trim().toLowerCase();
+  const cat = (v.category ?? "").trim().toLowerCase();
+  return m === "n/a" && model === "no vehicle" && Number(v.base_price ?? 0) === 0 && cat === "n/a";
+}
+
 const STANDALONE_MOD_NAMES = new Set(
   ["repair", "repair kit", "screwdriver"].map((s) => s.toLowerCase().trim())
 );
 
-const SERVICE_VEHICLE_ID = 1;
-
 export default function usePOS({ staffId }: UsePOSArgs) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+
+  // ✅ Placeholder “No Vehicle” row (used for non-vehicle sales)
+  const [serviceVehicle, setServiceVehicle] = useState<Vehicle | null>(null);
 
   const [modsRoot, setModsRoot] = useState<ModNode | null>(null);
 
@@ -144,8 +159,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const [isPaying, setIsPaying] = useState(false);
 
-  // ✅ NEW: plate entry (shown under customer, sent to order, shown in jobs)
+  // ✅ Plate entry (shown under customer, sent to order, shown in jobs)
   const [plate, setPlate] = useState("");
+
+  const serviceVehicleId = serviceVehicle?.id ?? null;
 
   // -------------------------
   // LOAD VEHICLES
@@ -160,6 +177,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     if (error) {
       console.error("Failed to load vehicles:", error);
       setVehicles([]);
+      setServiceVehicle(null);
       return;
     }
 
@@ -176,6 +194,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     })) as Vehicle[];
 
     setVehicles(rows);
+
+    const placeholder = rows.find(isNoVehiclePlaceholder) ?? null;
+    setServiceVehicle(placeholder);
+
+    if (!placeholder) {
+      console.warn(
+        'No placeholder vehicle found (manufacturer="N/A", model="No Vehicle", base_price=0, category="N/A"). No-vehicle checkout may fail.'
+      );
+    }
   };
 
   // -------------------------
@@ -258,6 +285,35 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
+  // ENFORCE INACTIVE RULES (functional, not just UI)
+  // -------------------------
+  const isAllowedFlatOnInactive = (mod: ModNode) => {
+    if (mod.pricing_type !== "flat") return false;
+    const name = (mod.name ?? "").toLowerCase().trim();
+    return name === "repair" || name === "repair kit" || name === "screwdriver";
+  };
+
+  const isInCosmeticsPath = (modId: string) => {
+    let cur = modsById.get(modId);
+    let guard = 0;
+
+    while (cur && guard++ < 50) {
+      const parentId = cur.parent_id;
+      if (!parentId) break;
+
+      const parent = modsById.get(parentId);
+      if (!parent) break;
+
+      const parentName = (parent.name ?? "").toLowerCase().trim();
+      if (parent.is_menu && parentName === "cosmetics") return true;
+
+      cur = parent;
+    }
+
+    return false;
+  };
+
+  // -------------------------
   // ADD MOD TO CART
   // -------------------------
   const addModToCart = (modId: string) => {
@@ -273,9 +329,25 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
+    // ✅ Inactive vehicle functional enforcement
+    const selectedInactive = Boolean(selectedVehicle && selectedVehicle.active === false);
+    if (selectedInactive) {
+      const cosmeticsOk = isInCosmeticsPath(mod.id);
+      const flatWhitelistOk = isAllowedFlatOnInactive(mod);
+
+      if (!cosmeticsOk && !flatWhitelistOk) {
+        alert("Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, or Screwdriver.");
+        return;
+      }
+
+      // If it's inactive and not cosmetics, percentage mods are implicitly blocked by above.
+    }
+
     const modNameKey = String(mod.name ?? "").toLowerCase().trim();
     const isStandaloneAllowed = STANDALONE_MOD_NAMES.has(modNameKey);
 
+    // ✅ No vehicle selected:
+    // Allowed: flat mods only AND only the standalone whitelist.
     if (!selectedVehicle) {
       if (!isStandaloneAllowed) {
         alert("Select a vehicle first.");
@@ -284,6 +356,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
       if (pt !== "flat") {
         alert(`"${mod.name}" must be flat-priced to sell without a vehicle.`);
+        return;
+      }
+
+      // ✅ Must have real placeholder ID (no hard-coded id=1)
+      if (!serviceVehicleId) {
+        alert('Missing "No Vehicle" placeholder row in vehicles table. Cannot sell without a vehicle.');
         return;
       }
 
@@ -305,7 +383,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
             computed_price: computedSale,
             quantity: 1,
 
-            vehicle_id: SERVICE_VEHICLE_ID,
+            vehicle_id: serviceVehicleId,
             mod_id: mod.id,
             mod_name: mod.name,
             pricing_type: pt,
@@ -319,6 +397,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
+    // ✅ Vehicle selected:
     const computedSale = computeModPrice(mod, selectedVehicle.base_price);
     if (computedSale == null) {
       alert(`"${mod.name}" has invalid pricing. Configure it in /mods.`);
@@ -472,7 +551,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    const orderVehicleId = selectedVehicle ? selectedVehicle.id : SERVICE_VEHICLE_ID;
+    // ✅ No vehicle selected requires placeholder vehicle id
+    if (!selectedVehicle && !serviceVehicleId) {
+      alert('Missing "No Vehicle" placeholder row in vehicles table. Cannot checkout without a vehicle.');
+      return;
+    }
+
+    const orderVehicleId = selectedVehicle ? selectedVehicle.id : serviceVehicleId!;
     const orderVehicleBasePrice = selectedVehicle ? Number(selectedVehicle.base_price ?? 0) : 0;
 
     setIsPaying(true);
@@ -483,19 +568,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         vehicle_id: orderVehicleId,
 
         customer_id:
-          selectedCustomerType === "staff"
-            ? null
-            : selectedCustomer
-              ? selectedCustomer.id
-              : null,
+          selectedCustomerType === "staff" ? null : selectedCustomer ? selectedCustomer.id : null,
 
         discount_id: discount ? discount.id : null,
         customer_is_staff: selectedCustomerType === "staff",
 
         vehicle_base_price: orderVehicleBasePrice,
 
-        // ✅ plate added (stored in orders.plate)
-        plate: plate.trim() || null,
+        // ✅ IMPORTANT: match DB + API contract naming
+        vehicle_plate: plate.trim() || null,
 
         subtotal: roundToCents(subtotal),
         discount_amount: roundToCents(discountAmount + staffDiscountAmount),
@@ -504,7 +585,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         note: note?.trim() || null,
 
         lines: cart.map((c) => ({
-          vehicle_id: c.is_service_item ? SERVICE_VEHICLE_ID : c.vehicle_id,
+          vehicle_id: c.is_service_item ? orderVehicleId : c.vehicle_id,
           mod_id: c.mod_id,
           mod_name: c.mod_name,
           quantity: c.quantity,
