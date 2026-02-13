@@ -29,6 +29,16 @@ type TimesheetEntry = {
   hours_worked: number | null;
 };
 
+type PayPeriodMetricsResponse = {
+  staff_id: number;
+  period: { start: string; end: string };
+  profit: number;
+  commission: number;
+  orders_count: number;
+  // commission_rate may exist in API response, but we do NOT display it
+  commission_rate?: number;
+};
+
 // ------------------------------
 // Timezone Helpers (Australia/Melbourne)
 // ------------------------------
@@ -41,6 +51,12 @@ function formatMelbourneDateTime(iso: string) {
   });
 }
 
+function formatMelbourneDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-AU", {
+    timeZone: MEL_TZ,
+  });
+}
+
 // ------------------------------
 // Main Component
 // ------------------------------
@@ -48,16 +64,19 @@ export default function TimesheetPage() {
   const [session, setSession] = useState<any>(null);
 
   const [mySummary, setMySummary] = useState<SummaryResponse | null>(null);
-  const [topHours, setTopHours] = useState<TopHoursResponse["top"] | null>(
+  const [topHours, setTopHours] = useState<TopHoursResponse["top"] | null>(null);
+
+  const [entries, setEntries] = useState<TimesheetEntry[]>([]);
+  const [clockedInEntry, setClockedInEntry] = useState<TimesheetEntry | null>(
     null
   );
 
-  const [entries, setEntries] = useState<TimesheetEntry[]>([]);
-  const [clockedInEntry, setClockedInEntry] =
-    useState<TimesheetEntry | null>(null);
-
   const [timer, setTimer] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  const [payMetrics, setPayMetrics] = useState<PayPeriodMetricsResponse | null>(
+    null
+  );
 
   // ------------------------------
   // Load Session
@@ -87,6 +106,31 @@ export default function TimesheetPage() {
   };
 
   // ------------------------------
+  // Load My Pay Period Metrics (profit + commission)
+  // ------------------------------
+  const loadPayPeriodMetrics = async () => {
+    const res = await fetch("/api/payments/my-period-metrics", {
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      setPayMetrics(null);
+      return;
+    }
+
+    const json = await res.json();
+
+    const valid =
+      json &&
+      json.period &&
+      typeof json.profit === "number" &&
+      typeof json.commission === "number" &&
+      typeof json.orders_count === "number";
+
+    setPayMetrics(valid ? json : null);
+  };
+
+  // ------------------------------
   // Load My Timesheet Entries
   // ------------------------------
   const loadEntries = async () => {
@@ -112,6 +156,7 @@ export default function TimesheetPage() {
     await fetch("/api/timesheet/clockout", { method: "POST" });
     await loadEntries();
     await loadMySummary();
+    await loadPayPeriodMetrics();
   };
 
   // ------------------------------
@@ -140,7 +185,7 @@ export default function TimesheetPage() {
 
   useEffect(() => {
     if (session) {
-      Promise.all([loadEntries(), loadMySummary(), loadTopHours()]);
+      Promise.all([loadEntries(), loadMySummary(), loadTopHours(), loadPayPeriodMetrics()]);
       setLoading(false);
     }
   }, [session]);
@@ -155,52 +200,35 @@ export default function TimesheetPage() {
       const m = Math.floor((sec % 3600) / 60);
       return `${h}h ${m}m`;
     },
-    date: (iso: string) => formatMelbourneDateTime(iso),
+    dateTime: (iso: string) => formatMelbourneDateTime(iso),
+    money: (n: number) =>
+      Number(n || 0).toLocaleString("en-AU", {
+        style: "currency",
+        currency: "AUD",
+      }),
   };
 
   // ------------------------------
   // UI Start
   // ------------------------------
   if (loading || !mySummary) {
-    return (
-      <div className="text-slate-200 p-10 text-xl">Loading timesheet...</div>
-    );
+    return <div className="text-slate-200 p-10 text-xl">Loading timesheet...</div>;
   }
 
   const role = (session?.role || "").toLowerCase().trim();
   const isPrivileged = role === "admin" || role === "owner" || role === "manager";
 
+  const payPeriodLabel =
+    payMetrics?.period?.start && payMetrics?.period?.end
+      ? `${formatMelbourneDate(payMetrics.period.start)} → ${formatMelbourneDate(
+          payMetrics.period.end
+        )}`
+      : null;
+
   return (
     <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8 pb-20">
       {/* ============================================
-          HEADER SUMMARY BAR
-      ============================================ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-        {/* Top Hours */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
-          <div className="text-lg text-slate-300 mb-1">
-            Monthly Top Hours
-          </div>
-          <div className="text-2xl font-bold text-[color:var(--accent)]">
-            {topHours
-              ? `${topHours.staff_name} — ${fmt.hours(topHours.hours)}`
-              : "No data"}
-          </div>
-        </div>
-
-        {/* Your Monthly Hours */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
-          <div className="text-lg text-slate-300 mb-1">
-            Your Monthly Hours
-          </div>
-          <div className="text-2xl font-bold text-emerald-400">
-            {fmt.hours(mySummary.monthly.hours)}
-          </div>
-        </div>
-      </div>
-
-      {/* ============================================
-          CLOCK IN / CLOCK OUT
+          CLOCK IN / CLOCK OUT (top, alone)
       ============================================ */}
       <div className="mb-10 flex flex-col items-start">
         {clockedInEntry ? (
@@ -226,28 +254,68 @@ export default function TimesheetPage() {
       </div>
 
       {/* ============================================
-          WEEKLY SUMMARY
+          ROW 1 (3 tiles)
+          Monthly Top Hours | Your Monthly Hours | Avg Shift Length
+      ============================================ */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        {/* Monthly Top Hours */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Monthly Top Hours</div>
+          <div className="text-2xl font-bold text-[color:var(--accent)]">
+            {topHours ? `${topHours.staff_name} — ${fmt.hours(topHours.hours)}` : "No data"}
+          </div>
+        </div>
+
+        {/* Your Monthly Hours (red) */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Your Monthly Hours</div>
+          <div className="text-2xl font-bold text-red-400">
+            {fmt.hours(mySummary.monthly.hours)}
+          </div>
+        </div>
+
+        {/* Avg Shift Length */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Avg Shift Length</div>
+          <div className="text-2xl font-bold text-red-400">
+            {mySummary.averages.avg_shift_length.toFixed(1)}h
+          </div>
+        </div>
+      </div>
+
+      {/* ============================================
+          ROW 2 (3 tiles)
+          Pay Period Profit | Pay Period Commission | Shifts this month
       ============================================ */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-lg">
-          <h3 className="text-slate-300 mb-2">Hours This Week</h3>
-          <p className="text-3xl font-bold text-[color:var(--accent)]">
-            {fmt.hours(mySummary.weekly.hours)}
-          </p>
+        {/* Pay Period Profit */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Pay Period Profit</div>
+          <div className="text-2xl font-bold text-red-400">
+            {payMetrics ? fmt.money(payMetrics.profit) : fmt.money(0)}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            {payPeriodLabel ? `Current pay period: ${payPeriodLabel}` : " "}
+          </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-lg">
-          <h3 className="text-slate-300 mb-2">Shifts This Week</h3>
-          <p className="text-3xl font-bold text-[color:var(--accent)]">
-            {mySummary.weekly.shifts}
-          </p>
+        {/* Pay Period Commission (do NOT show %) */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Pay Period Commission</div>
+          <div className="text-2xl font-bold text-red-400">
+            {payMetrics ? fmt.money(payMetrics.commission) : fmt.money(0)}
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            {payMetrics ? `${payMetrics.orders_count} orders` : " "}
+          </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl shadow-lg">
-          <h3 className="text-slate-300 mb-2">Avg Shift Length</h3>
-          <p className="text-3xl font-bold text-[color:var(--accent)]">
-            {mySummary.averages.avg_shift_length.toFixed(1)}h
-          </p>
+        {/* Shifts this month */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+          <div className="text-lg text-slate-300 mb-1">Shifts This Month</div>
+          <div className="text-2xl font-bold text-red-400">
+            {mySummary.monthly.shifts}
+          </div>
         </div>
       </div>
 
@@ -286,22 +354,15 @@ export default function TimesheetPage() {
                 key={e.id}
                 className="border-b border-slate-800 hover:bg-slate-800/50"
               >
-                <td className="p-3">{fmt.date(e.clock_in)}</td>
-                <td className="p-3">
-                  {e.clock_out ? fmt.date(e.clock_out) : "-"}
-                </td>
-                <td className="p-3">
-                  {e.hours_worked ? e.hours_worked.toFixed(2) : "0.00"}
-                </td>
+                <td className="p-3">{fmt.dateTime(e.clock_in)}</td>
+                <td className="p-3">{e.clock_out ? fmt.dateTime(e.clock_out) : "-"}</td>
+                <td className="p-3">{e.hours_worked ? e.hours_worked.toFixed(2) : "0.00"}</td>
               </tr>
             ))}
 
             {entries.length === 0 && (
               <tr>
-                <td
-                  colSpan={3}
-                  className="text-center p-6 text-slate-500 italic"
-                >
+                <td colSpan={3} className="text-center p-6 text-slate-500 italic">
                   No timesheet entries found.
                 </td>
               </tr>
