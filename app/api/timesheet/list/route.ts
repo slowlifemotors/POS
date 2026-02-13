@@ -9,23 +9,34 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
+function roleLower(role: unknown) {
+  return typeof role === "string" ? role.toLowerCase().trim() : "";
+}
+
+function isManagerOrAbove(role: unknown) {
+  const r = roleLower(role);
+  return r === "owner" || r === "admin" || r === "manager";
+}
+
 export async function GET(req: Request) {
   try {
     const session = await getSession();
 
     if (!session?.staff) {
-      return NextResponse.json({ error: "Unauthorized", entries: [] }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized", entries: [] },
+        { status: 401 }
+      );
     }
 
-    const role = session.staff.role.toLowerCase();
-    const isAdmin = role === "admin" || role === "owner";
+    const privileged = isManagerOrAbove(session.staff.role);
 
     const { searchParams } = new URL(req.url);
     const requestedStaffId = searchParams.get("staff_id");
 
     let targetStaffId: number;
 
-    if (isAdmin && requestedStaffId) {
+    if (privileged && requestedStaffId) {
       targetStaffId = Number(requestedStaffId);
     } else {
       // Staff can only fetch their own timesheets
@@ -39,7 +50,8 @@ export async function GET(req: Request) {
     // JOIN with staff + roles for enriched data
     const { data, error } = await supabase
       .from("timesheets")
-      .select(`
+      .select(
+        `
         id,
         staff_id,
         clock_in,
@@ -52,7 +64,8 @@ export async function GET(req: Request) {
             name
           )
         )
-      `)
+      `
+      )
       .eq("staff_id", targetStaffId)
       .order("clock_in", { ascending: false });
 
@@ -70,7 +83,7 @@ export async function GET(req: Request) {
         role: row.staff?.role?.name || "",
         clock_in: row.clock_in,
         clock_out: row.clock_out,
-        hours_worked: row.hours_worked || 0
+        hours_worked: row.hours_worked || 0,
       };
     });
 

@@ -17,6 +17,8 @@ type Customer = {
   membership_start: string | null;
   membership_end: string | null;
 
+  note: string | null;
+
   is_blacklisted: boolean;
   blacklist_start: string | null;
   blacklist_end: string | null;
@@ -29,6 +31,54 @@ type Discount = {
   percent: number;
 };
 
+function NotesModal({
+  customer,
+  onClose,
+  onEdit,
+}: {
+  customer: Customer;
+  onClose: () => void;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-105 text-slate-100 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-white">Notes</h2>
+            <p className="text-sm text-slate-400 mt-1">{customer.name}</p>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded"
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+
+        <textarea
+          className="mt-4 w-full bg-slate-800 border border-slate-700 p-3 rounded text-slate-100"
+          rows={8}
+          value={customer.note ?? ""}
+          readOnly
+        />
+
+        <div className="flex justify-end gap-3 mt-4">
+          <button
+            onClick={onEdit}
+            className="px-4 py-2 rounded bg-(--accent) hover:bg-(--accent-hover) text-white"
+            type="button"
+          >
+            Edit Customer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [discounts, setDiscounts] = useState<Discount[]>([]);
@@ -39,6 +89,9 @@ export default function CustomersPage() {
 
   const [blacklistModal, setBlacklistModal] = useState(false);
   const [blacklistCustomer, setBlacklistCustomer] = useState<Customer | null>(null);
+
+  const [notesModal, setNotesModal] = useState(false);
+  const [notesCustomer, setNotesCustomer] = useState<Customer | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +187,6 @@ export default function CustomersPage() {
         throw new Error(json?.error || `Delete failed (${res.status})`);
       }
 
-      // Optimistic update (fast UI), then sync
       setCustomers((prev) => prev.filter((c) => c.id !== id));
       await loadCustomers();
     } catch (e: any) {
@@ -162,9 +214,7 @@ export default function CustomersPage() {
               setEditingCustomer(null);
               setShowModal(true);
             }}
-            className="px-4 py-2 rounded-lg font-semibold
-              bg-(--accent)
-              hover:bg-(--accent-hover)"
+            className="px-4 py-2 rounded-lg font-semibold bg-(--accent) hover:bg-(--accent-hover)"
             type="button"
           >
             + Add Customer
@@ -212,9 +262,7 @@ export default function CustomersPage() {
                   <td className="p-3">{c.name}</td>
                   <td className="p-3">{c.phone || "-"}</td>
                   <td className="p-3">{discountText(c)}</td>
-                  <td className="p-3">
-                    ${Number(c.voucher_amount ?? 0).toFixed(2)}
-                  </td>
+                  <td className="p-3">${Number(c.voucher_amount ?? 0).toFixed(2)}</td>
                   <td className="p-3">{membershipText(c)}</td>
                   <td className="p-3">
                     {c.is_blacklisted ? (
@@ -235,6 +283,20 @@ export default function CustomersPage() {
                     >
                       Edit
                     </button>
+
+                    {/* ✅ Notes button (green) only if note exists */}
+                    {c.note && c.note.trim() && (
+                      <button
+                        onClick={() => {
+                          setNotesCustomer(c);
+                          setNotesModal(true);
+                        }}
+                        className="text-green-400 hover:text-green-300"
+                        type="button"
+                      >
+                        Notes
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {
@@ -284,6 +346,18 @@ export default function CustomersPage() {
           customer={blacklistCustomer}
           onClose={() => setBlacklistModal(false)}
           onSaved={loadCustomers}
+        />
+      )}
+
+      {notesModal && notesCustomer && (
+        <NotesModal
+          customer={notesCustomer}
+          onClose={() => setNotesModal(false)}
+          onEdit={() => {
+            setNotesModal(false);
+            setEditingCustomer(notesCustomer);
+            setShowModal(true);
+          }}
         />
       )}
     </div>

@@ -10,7 +10,10 @@ const supabase = createClient(
 );
 
 // Utility — recompute hours from timestamps
-function calculateHours(clock_in: string | null, clock_out: string | null): number | null {
+function calculateHours(
+  clock_in: string | null,
+  clock_out: string | null
+): number | null {
   if (!clock_in || !clock_out) return null;
 
   const start = new Date(clock_in).getTime();
@@ -20,6 +23,15 @@ function calculateHours(clock_in: string | null, clock_out: string | null): numb
 
   const diffMs = end - start;
   return diffMs / 1000 / 60 / 60; // convert ms → hours
+}
+
+function roleLower(role: unknown) {
+  return typeof role === "string" ? role.toLowerCase().trim() : "";
+}
+
+function isManagerOrAbove(role: unknown) {
+  const r = roleLower(role);
+  return r === "owner" || r === "admin" || r === "manager";
 }
 
 // ─────────────────────────────────────────────
@@ -32,10 +44,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const role = session.staff.role.toLowerCase();
-    const isAdmin = role === "admin" || role === "owner";
-
-    if (!isAdmin) {
+    if (!isManagerOrAbove(session.staff.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -69,7 +78,7 @@ export async function PUT(req: Request) {
         clock_in,
         clock_out,
         hours_worked,
-      }
+      },
     });
   } catch (err) {
     console.error("Admin update fatal error:", err);
@@ -87,10 +96,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const role = session.staff.role.toLowerCase();
-    const isAdmin = role === "admin" || role === "owner";
-
-    if (!isAdmin) {
+    if (!isManagerOrAbove(session.staff.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -101,10 +107,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Missing id" }, { status: 400 });
     }
 
-    const { error } = await supabase
-      .from("timesheets")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabase.from("timesheets").delete().eq("id", id);
 
     if (error) {
       console.error("Delete error:", error);
@@ -113,7 +116,7 @@ export async function DELETE(req: Request) {
 
     return NextResponse.json({
       success: true,
-      deleted_id: id
+      deleted_id: id,
     });
   } catch (err) {
     console.error("Delete fatal error:", err);

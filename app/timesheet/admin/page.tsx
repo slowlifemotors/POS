@@ -4,7 +4,9 @@
 import React, { useEffect, useState } from "react";
 import StaffSelector from "./components/StaffSelector";
 import SummaryCards, { SummaryData } from "./components/SummaryCards";
-import AdminTimesheetTable, { TimesheetEntry } from "./components/AdminTimesheetTable";
+import AdminTimesheetTable, {
+  TimesheetEntry,
+} from "./components/AdminTimesheetTable";
 import EditDrawer from "./components/EditDrawer";
 
 export default function AdminTimesheetPage() {
@@ -44,7 +46,9 @@ export default function AdminTimesheetPage() {
   const loadSummary = async () => {
     if (!selectedStaff) return;
 
-    const res = await fetch(`/api/timesheet/summary?staff_id=${selectedStaff.id}`);
+    const res = await fetch(
+      `/api/timesheet/summary?staff_id=${selectedStaff.id}`
+    );
     const json = await res.json();
     setSummary(json);
   };
@@ -55,7 +59,9 @@ export default function AdminTimesheetPage() {
   const loadEntries = async () => {
     if (!selectedStaff) return;
 
-    const res = await fetch(`/api/timesheet/list?staff_id=${selectedStaff.id}`);
+    const res = await fetch(
+      `/api/timesheet/list?staff_id=${selectedStaff.id}`
+    );
     const json = await res.json();
     setEntries(json.entries || []);
   };
@@ -90,7 +96,7 @@ export default function AdminTimesheetPage() {
   };
 
   // ─────────────────────────────────────────────
-  // After Save / Delete → reload + close drawer
+  // After Save / Delete → reload
   // ─────────────────────────────────────────────
   const handleSaved = () => {
     loadSummary();
@@ -110,8 +116,11 @@ export default function AdminTimesheetPage() {
     );
   }
 
+  const role = (session?.role || "").toLowerCase().trim();
+  const isPrivileged = role === "admin" || role === "owner" || role === "manager";
+
   // Block unauthorized users
-  if (!session || (session.role !== "admin" && session.role !== "owner")) {
+  if (!session || !isPrivileged) {
     return (
       <div className="text-red-400 text-xl p-10">
         You do not have permission to view this page.
@@ -139,16 +148,10 @@ export default function AdminTimesheetPage() {
       {selectedStaff && (
         <>
           {/* Summary Cards */}
-          <SummaryCards
-            summary={summary}
-            staffName={selectedStaff.name}
-          />
+          <SummaryCards summary={summary} staffName={selectedStaff.name} />
 
           {/* Table */}
-          <AdminTimesheetTable
-            entries={entries}
-            onSelectEntry={openEditDrawer}
-          />
+          <AdminTimesheetTable entries={entries} onSelectEntry={openEditDrawer} />
 
           {/* Edit Drawer */}
           <EditDrawer

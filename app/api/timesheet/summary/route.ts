@@ -9,6 +9,15 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
+function roleLower(role: unknown) {
+  return typeof role === "string" ? role.toLowerCase().trim() : "";
+}
+
+function isManagerOrAbove(role: unknown) {
+  const r = roleLower(role);
+  return r === "owner" || r === "admin" || r === "manager";
+}
+
 // Monday → Sunday week boundaries
 function getWeekRange() {
   const now = new Date();
@@ -35,10 +44,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Not logged in" }, { status: 401 });
     }
 
-    const role = session.staff.role.toLowerCase();
-    const isAdmin = role === "admin" || role === "owner";
-
-    if (!isAdmin) {
+    if (!isManagerOrAbove(session.staff.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -90,12 +96,8 @@ export async function GET(req: Request) {
       monthRows?.reduce((sum, r) => sum + (r.hours_worked || 0), 0) || 0;
     const monthlyShifts = monthRows?.length || 0;
 
-    const avgShiftHours =
-      monthlyShifts > 0 ? monthlyHours / monthlyShifts : 0;
+    const avgShiftHours = monthlyShifts > 0 ? monthlyHours / monthlyShifts : 0;
 
-    // ─────────────────────────────
-    // CLEAN RESPONSE FORMAT (FIX)
-    // ─────────────────────────────
     return NextResponse.json({
       weekly_hours: weeklyHours,
       weekly_shifts: weeklyShifts,

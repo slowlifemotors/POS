@@ -51,6 +51,13 @@ export type Customer = {
   name: string;
   phone: string | null;
   discount_id: number | null;
+
+  voucher_amount: number;
+
+  membership_active: boolean;
+  membership_start: string | null;
+  membership_end: string | null;
+
   is_blacklisted: boolean;
   blacklist_reason: string | null;
   blacklist_start: string | null;
@@ -114,13 +121,6 @@ function computeModPrice(mod: ModNode, vehicleBasePrice: number) {
   return roundToCents(Number(mod.pricing_value));
 }
 
-/**
- * Placeholder vehicle detector:
- * manufacturer: N/A
- * model: No Vehicle
- * base_price: 0
- * category: N/A
- */
 function isNoVehiclePlaceholder(v: Vehicle) {
   const m = (v.manufacturer ?? "").trim().toLowerCase();
   const model = (v.model ?? "").trim().toLowerCase();
@@ -128,22 +128,35 @@ function isNoVehiclePlaceholder(v: Vehicle) {
   return m === "n/a" && model === "no vehicle" && Number(v.base_price ?? 0) === 0 && cat === "n/a";
 }
 
-const STANDALONE_MOD_NAMES = new Set(
-  ["repair", "repair kit", "screwdriver"].map((s) => s.toLowerCase().trim())
-);
+const STANDALONE_MOD_NAMES = new Set(["repair", "repair kit", "screwdriver", "raffle ticket"].map((s) => s.toLowerCase().trim()));
+
+function todayYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isMembershipActive(c: Customer | null) {
+  if (!c) return false;
+  if (!c.membership_active) return false;
+
+  const s = c.membership_start;
+  const e = c.membership_end;
+
+  // Open-ended if missing dates
+  if (!s || !e) return true;
+
+  const t = todayYMD();
+  return s <= t && t <= e;
+}
 
 export default function usePOS({ staffId }: UsePOSArgs) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
-  // ✅ Placeholder “No Vehicle” row (used for non-vehicle sales)
   const [serviceVehicle, setServiceVehicle] = useState<Vehicle | null>(null);
 
   const [modsRoot, setModsRoot] = useState<ModNode | null>(null);
 
   const [tabs, setTabs] = useState<Tab[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState("cash");
-
   const [searchTerm, setSearchTerm] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -159,14 +172,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const [isPaying, setIsPaying] = useState(false);
 
-  // ✅ Plate entry (shown under customer, sent to order, shown in jobs)
   const [plate, setPlate] = useState("");
 
   const serviceVehicleId = serviceVehicle?.id ?? null;
 
-  // -------------------------
-  // LOAD VEHICLES
-  // -------------------------
   const loadVehicles = async () => {
     const { data, error } = await supabase
       .from("vehicles")
@@ -205,9 +214,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
   };
 
-  // -------------------------
-  // LOAD MODS TREE
-  // -------------------------
   const loadModsTree = async () => {
     try {
       const res = await fetch("/api/mods/tree", { cache: "no-store" });
@@ -226,9 +232,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
   };
 
-  // -------------------------
-  // LOAD TABS
-  // -------------------------
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
     const json = await res.json();
@@ -242,9 +245,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     loadTabs();
   }, []);
 
-  // -------------------------
-  // FILTER VEHICLES
-  // -------------------------
   const filteredVehicles = useMemo(() => {
     const s = searchTerm.trim().toLowerCase();
     const base = vehicles;
@@ -269,9 +269,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const modsById = useMemo(() => flattenMods(modsRoot), [modsRoot]);
 
-  // -------------------------
-  // SELECT VEHICLE
-  // -------------------------
   const selectVehicle = (v: Vehicle) => {
     setSelectedVehicle(v);
     setCart([]);
@@ -284,9 +281,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setIsCheckoutOpen(false);
   };
 
-  // -------------------------
-  // ENFORCE INACTIVE RULES (functional, not just UI)
-  // -------------------------
   const isAllowedFlatOnInactive = (mod: ModNode) => {
     if (mod.pricing_type !== "flat") return false;
     const name = (mod.name ?? "").toLowerCase().trim();
@@ -313,9 +307,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     return false;
   };
 
-  // -------------------------
-  // ADD MOD TO CART
-  // -------------------------
   const addModToCart = (modId: string) => {
     const mod = modsById.get(modId);
     if (!mod) return;
@@ -329,7 +320,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // ✅ Inactive vehicle functional enforcement
     const selectedInactive = Boolean(selectedVehicle && selectedVehicle.active === false);
     if (selectedInactive) {
       const cosmeticsOk = isInCosmeticsPath(mod.id);
@@ -344,8 +334,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const modNameKey = String(mod.name ?? "").toLowerCase().trim();
     const isStandaloneAllowed = STANDALONE_MOD_NAMES.has(modNameKey);
 
-    // ✅ No vehicle selected:
-    // Allowed: flat mods only AND only the standalone whitelist.
     if (!selectedVehicle) {
       if (!isStandaloneAllowed) {
         alert("Select a vehicle first.");
@@ -357,7 +345,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         return;
       }
 
-      // ✅ Must have real placeholder ID (no hard-coded id=1)
       if (!serviceVehicleId) {
         alert('Missing "No Vehicle" placeholder row in vehicles table. Cannot sell without a vehicle.');
         return;
@@ -395,7 +382,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // ✅ Vehicle selected:
     const computedSale = computeModPrice(mod, selectedVehicle.base_price);
     if (computedSale == null) {
       alert(`"${mod.name}" has invalid pricing. Configure it in /mods.`);
@@ -433,9 +419,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     });
   };
 
-  // -------------------------
-  // CART MANAGEMENT
-  // -------------------------
   const updateQty = (id: string, amt: number) => {
     setCart((prev) =>
       prev
@@ -449,15 +432,21 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // TOTALS (staff = x0.75)
+  // TOTALS
   // -------------------------
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const discountPercent = discount ? discount.percent : 0;
-  const discountAmount = roundToCents((subtotal * discountPercent) / 100);
+  const membershipPct = selectedCustomerType === "customer" && isMembershipActive(selectedCustomer) ? 10 : 0;
+  const discountPercent = discount ? Number(discount.percent ?? 0) : 0;
 
+  // Use MAX so membership doesn't stack with other discount
+  const effectiveDiscountPercent =
+    selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
+
+  const discountAmount = roundToCents((subtotal * effectiveDiscountPercent) / 100);
   const afterDiscount = roundToCents(subtotal - discountAmount);
 
+  // Staff pricing (25% off) only for staff sales
   const staffMultiplier = selectedCustomerType === "staff" ? 0.75 : 1;
   const staffDiscountAmount = roundToCents(afterDiscount * (1 - staffMultiplier));
 
@@ -465,7 +454,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const total = Math.ceil(rawTotal);
 
   // -------------------------
-  // BLACKLIST CHECK
+  // BLACKLIST CHECK (permanent if dates missing)
   // -------------------------
   useEffect(() => {
     if (!selectedCustomer) {
@@ -473,41 +462,49 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    const today = new Date().toISOString().split("T")[0];
-
-    if (
-      selectedCustomer.is_blacklisted &&
-      selectedCustomer.blacklist_start &&
-      selectedCustomer.blacklist_end &&
-      selectedCustomer.blacklist_start <= today &&
-      today <= selectedCustomer.blacklist_end
-    ) {
-      setIsBlacklisted(true);
-    } else {
+    if (selectedCustomerType !== "customer") {
       setIsBlacklisted(false);
+      return;
     }
-  }, [selectedCustomer]);
+
+    if (!selectedCustomer.is_blacklisted) {
+      setIsBlacklisted(false);
+      return;
+    }
+
+    const start = selectedCustomer.blacklist_start;
+    const end = selectedCustomer.blacklist_end;
+
+    if (!start || !end) {
+      setIsBlacklisted(true);
+      return;
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    setIsBlacklisted(start <= today && today <= end);
+  }, [selectedCustomer, selectedCustomerType]);
+
+  // Only apply x2 for real customers (not staff sales)
+  const blacklistMultiplier = isBlacklisted && selectedCustomerType === "customer" ? 2 : 1;
+
+  const displaySubtotal = roundToCents(subtotal * blacklistMultiplier);
+  const displayDiscountAmount = roundToCents(discountAmount * blacklistMultiplier);
+  const displayStaffDiscountAmount = roundToCents(staffDiscountAmount * blacklistMultiplier);
+  const displayTotal = Math.ceil(total * blacklistMultiplier);
 
   // -------------------------
   // CUSTOMER SELECTION
   // -------------------------
-  const handleSelectCustomer = (
-    customer: Customer,
-    disc: Discount | null,
-    customerType: SelectedCustomerType = "customer"
-  ) => {
+  const handleSelectCustomer = (customer: Customer, disc: Discount | null, customerType: SelectedCustomerType = "customer") => {
     setSelectedCustomer(customer);
     setSelectedCustomerType(customerType);
     setDiscount(disc);
     setShowCustomerModal(false);
   };
 
-  // -------------------------
-  // REFRESH CUSTOMER
-  // -------------------------
   const refreshCustomer = async () => {
     if (!selectedCustomer) return;
-    if (selectedCustomerType === "staff") return;
+    if (selectedCustomerType !== "customer") return;
 
     const res = await fetch(`/api/customers?id=${selectedCustomer.id}`, { cache: "no-store" });
     const json = await res.json().catch(() => ({}));
@@ -528,16 +525,11 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const cartHasVehicleItems = cart.some((c) => !c.is_service_item);
   const canCheckout = cart.length > 0 && (!cartHasVehicleItems || (cartHasVehicleItems && selectedVehicle != null));
 
-  // -------------------------
-  // CREATE ORDER (checkout)
-  // -------------------------
-  const createOrder = async (note: string) => {
+  const createOrder = async (
+    note: string,
+    payment: { method: "card" | "voucher" | "split"; voucher_used: number; card_charge: number }
+  ) => {
     if (isPaying) return;
-
-    if (isBlacklisted) {
-      alert("This customer is currently blacklisted.");
-      return;
-    }
 
     if (cart.length === 0) {
       alert("Cart is empty.");
@@ -549,7 +541,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // ✅ No vehicle selected requires placeholder vehicle id
     if (!selectedVehicle && !serviceVehicleId) {
       alert('Missing "No Vehicle" placeholder row in vehicles table. Cannot checkout without a vehicle.');
       return;
@@ -558,11 +549,28 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const orderVehicleId = selectedVehicle ? selectedVehicle.id : serviceVehicleId!;
     const orderVehicleBasePrice = selectedVehicle ? Number(selectedVehicle.base_price ?? 0) : 0;
 
-    // ✅ IMPORTANT: if staff is selected as customer, persist staff_customer_id
     const staffCustomerId =
-      selectedCustomerType === "staff" && selectedCustomer
-        ? Math.abs(Number(selectedCustomer.id)) // staff pseudo id is negative => real staff id
-        : null;
+      selectedCustomerType === "staff" && selectedCustomer ? Math.abs(Number(selectedCustomer.id)) : null;
+
+    // Only customers can use voucher
+    const voucherAllowed = selectedCustomerType === "customer" && selectedCustomer != null;
+    const voucherBalance = voucherAllowed ? Number(selectedCustomer!.voucher_amount ?? 0) : 0;
+
+    let voucherUsed = 0;
+    if (voucherAllowed && (payment.method === "voucher" || payment.method === "split")) {
+      voucherUsed = roundToCents(Math.min(Math.max(0, voucherBalance), Math.max(0, displayTotal)));
+    }
+
+    // Force split if voucher isn't enough and they tried voucher-only
+    const cardCharge = roundToCents(Math.max(0, displayTotal - voucherUsed));
+    const finalMethod =
+      voucherUsed > 0 && cardCharge > 0 ? "split" : voucherUsed > 0 ? "voucher" : "card";
+
+    const payNote = `[PAYMENT: ${finalMethod.toUpperCase()} | voucher_used=$${voucherUsed.toFixed(2)} | card_charge=$${cardCharge.toFixed(
+      2
+    )}]`;
+
+    const finalNote = (blacklistMultiplier === 2 ? "[BLACKLISTED x2] " : "") + (note?.trim() || "");
 
     setIsPaying(true);
 
@@ -571,26 +579,19 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         staff_id: staffId,
         vehicle_id: orderVehicleId,
 
-        // customer is staff => customer_id must be null
-        customer_id:
-          selectedCustomerType === "staff" ? null : selectedCustomer ? selectedCustomer.id : null,
+        customer_id: selectedCustomerType === "staff" ? null : selectedCustomer ? selectedCustomer.id : null,
 
-        staff_customer_id: staffCustomerId, // ✅ NEW (used for jobs display + commission exclusion)
+        staff_customer_id: staffCustomerId,
         customer_is_staff: selectedCustomerType === "staff",
 
         discount_id: discount ? discount.id : null,
         vehicle_base_price: orderVehicleBasePrice,
 
-        // ✅ FIX: API expects "plate", not "vehicle_plate"
         plate: plate.trim() || null,
+        note: `${payNote} ${finalNote}`.trim() || null,
 
-        subtotal: roundToCents(subtotal),
-        discount_amount: roundToCents(discountAmount + staffDiscountAmount),
-        total,
+        voucher_used: voucherAllowed ? voucherUsed : 0,
 
-        note: note?.trim() || null,
-
-        // ✅ lines must all match order vehicle id (your API enforces this)
         lines: cart.map((c) => ({
           vehicle_id: orderVehicleId,
           mod_id: c.mod_id,
@@ -621,8 +622,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       setSelectedCustomerType(null);
       setDiscount(null);
       setSelectedVehicle(null);
-
-      // ✅ clear plate after successful sale
       setPlate("");
 
       alert(`Sale completed! Order ID: ${json.order_id}`);
@@ -642,11 +641,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     selectedCustomer,
     selectedCustomerType,
     discount,
-    originalTotal: subtotal,
-    discountAmount,
-    staffDiscountAmount,
-    finalTotal: total,
-    paymentMethod,
+
+    originalTotal: displaySubtotal,
+    discountAmount: displayDiscountAmount,
+    staffDiscountAmount: displayStaffDiscountAmount,
+    finalTotal: displayTotal,
+
     isCheckoutOpen,
     showCustomerModal,
     showEditCustomerModal,
@@ -654,7 +654,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     isPaying,
     canCheckout,
 
-    // ✅ plate API
     plate,
     setPlate,
 
@@ -664,10 +663,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     addModToCart,
     updateQty,
     removeItem,
-    setPaymentMethod,
     setIsCheckoutOpen,
     setShowCustomerModal,
     setShowEditCustomerModal,
+
     handleSelectCustomer,
     refreshCustomer,
 

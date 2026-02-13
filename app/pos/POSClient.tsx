@@ -6,7 +6,10 @@ import POSCart from "./components/POSCart";
 import POSCheckoutModal from "./components/POSCheckoutModal";
 import POSCustomerStatus from "./components/POSCustomerStatus";
 import AddCustomerModal from "./components/AddCustomerModal";
+
+// ✅ IMPORTANT: use the POS modal (not the customers page modal)
 import EditCustomerModal from "./components/EditCustomerModal";
+
 import usePOS from "./hooks/usePOS";
 
 export default function POSClient({
@@ -17,6 +20,9 @@ export default function POSClient({
   staffName: string;
 }) {
   const pos = usePOS({ staffId, staffName });
+
+  const voucherAllowed = pos.selectedCustomerType === "customer" && !!pos.selectedCustomer;
+  const voucherBalance = voucherAllowed ? Number((pos.selectedCustomer as any)?.voucher_amount ?? 0) : 0;
 
   return (
     <div className="flex h-screen bg-transparent text-slate-50">
@@ -37,9 +43,21 @@ export default function POSClient({
         <button
           onClick={() => pos.setShowCustomerModal(true)}
           className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"
+          type="button"
         >
           {pos.selectedCustomer ? "Change Customer" : "Add / Select Customer"}
         </button>
+
+        {/* ✅ Only show edit button for REAL customers */}
+        {pos.selectedCustomer && pos.selectedCustomerType === "customer" && (
+          <button
+            onClick={() => pos.setShowEditCustomerModal(true)}
+            className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"
+            type="button"
+          >
+            Edit Customer
+          </button>
+        )}
 
         <POSCustomerStatus
           customer={pos.selectedCustomer}
@@ -48,7 +66,7 @@ export default function POSClient({
           customerType={pos.selectedCustomerType}
         />
 
-        {/* ✅ Plate entry just under customer */}
+        {/* Plate entry */}
         <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
           <h3 className="text-sm font-semibold text-slate-300 mb-2">Plate</h3>
           <input
@@ -57,9 +75,7 @@ export default function POSClient({
             placeholder="e.g. ABC123"
             className="w-full p-2 rounded bg-slate-900 border border-slate-700 text-slate-50 placeholder:text-slate-500"
           />
-          <p className="text-xs text-slate-400 mt-2">
-            Logged on the job after checkout.
-          </p>
+          <p className="text-xs text-slate-400 mt-2">Logged on the job after checkout.</p>
         </div>
 
         <POSCart
@@ -78,13 +94,14 @@ export default function POSClient({
           onClick={() => pos.setIsCheckoutOpen(true)}
           disabled={!pos.canCheckout || pos.isPaying}
           className="mt-4 bg-(--accent) hover:(--accent-hover) disabled:bg-slate-700 disabled:text-slate-400 text-white py-3 rounded-lg shadow-lg font-semibold"
+          type="button"
         >
-          {pos.isPaying ? "Processing..." : "Pay (Card)"}
+          {pos.isPaying ? "Processing..." : "Pay"}
         </button>
 
-        {pos.isBlacklisted && (
+        {pos.isBlacklisted && pos.selectedCustomerType === "customer" && (
           <p className="mt-2 text-xs text-red-400 text-center font-semibold">
-            This customer is currently blacklisted — checkout is blocked.
+            Blacklisted customer — invoice is doubled (x2).
           </p>
         )}
       </div>
@@ -96,8 +113,10 @@ export default function POSClient({
         />
       )}
 
+      {/* ✅ POS EditCustomerModal expects customer + onClose + onSelectCustomer */}
       {pos.showEditCustomerModal && (
         <EditCustomerModal
+          customer={pos.selectedCustomerType === "customer" ? (pos.selectedCustomer as any) : null}
           onClose={() => pos.setShowEditCustomerModal(false)}
           onSelectCustomer={pos.handleSelectCustomer}
         />
@@ -106,7 +125,9 @@ export default function POSClient({
       {pos.isCheckoutOpen && (
         <POSCheckoutModal
           finalTotal={pos.finalTotal}
-          onConfirm={(note) => pos.createOrder(note)}
+          voucherBalance={voucherBalance}
+          voucherAllowed={voucherAllowed}
+          onConfirm={(note, payment) => pos.createOrder(note, payment)}
           onClose={() => pos.setIsCheckoutOpen(false)}
           isPaying={pos.isPaying}
         />

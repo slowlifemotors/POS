@@ -10,6 +10,15 @@ export type TimesheetEntry = {
   hours_worked: number;
 };
 
+const MEL_TZ = "Australia/Melbourne";
+
+function formatMelbourne(iso: string) {
+  return new Date(iso).toLocaleString("en-AU", {
+    timeZone: MEL_TZ,
+    hour12: false,
+  });
+}
+
 export default function AdminTimesheetTable({
   entries,
   onSelectEntry,
@@ -43,19 +52,17 @@ export default function AdminTimesheetTable({
               onClick={() => onSelectEntry(e)}
               className="border-b border-slate-800 hover:bg-slate-800/60 cursor-pointer transition"
             >
-              <td className="p-3">
-                {new Date(e.clock_in).toLocaleString("en-AU")}
-              </td>
+              <td className="p-3">{formatMelbourne(e.clock_in)}</td>
 
               <td className="p-3">
-                {e.clock_out
-                  ? new Date(e.clock_out).toLocaleString("en-AU")
-                  : <span className="text-fuchsia-500">Active</span>}
+                {e.clock_out ? (
+                  formatMelbourne(e.clock_out)
+                ) : (
+                  <span className="text-fuchsia-500">Active</span>
+                )}
               </td>
 
-              <td className="p-3">
-                {e.hours_worked?.toFixed(2)}h
-              </td>
+              <td className="p-3">{e.hours_worked?.toFixed(2)}h</td>
             </tr>
           ))}
         </tbody>

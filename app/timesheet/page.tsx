@@ -30,6 +30,18 @@ type TimesheetEntry = {
 };
 
 // ------------------------------
+// Timezone Helpers (Australia/Melbourne)
+// ------------------------------
+const MEL_TZ = "Australia/Melbourne";
+
+function formatMelbourneDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-AU", {
+    timeZone: MEL_TZ,
+    hour12: false,
+  });
+}
+
+// ------------------------------
 // Main Component
 // ------------------------------
 export default function TimesheetPage() {
@@ -143,10 +155,7 @@ export default function TimesheetPage() {
       const m = Math.floor((sec % 3600) / 60);
       return `${h}h ${m}m`;
     },
-    date: (d: string) =>
-      new Date(d).toLocaleString("en-AU", {
-        hour12: false,
-      }),
+    date: (iso: string) => formatMelbourneDateTime(iso),
   };
 
   // ------------------------------
@@ -158,8 +167,8 @@ export default function TimesheetPage() {
     );
   }
 
-  const isAdmin =
-    session?.role === "admin" || session?.role === "owner";
+  const role = (session?.role || "").toLowerCase().trim();
+  const isPrivileged = role === "admin" || role === "owner" || role === "manager";
 
   return (
     <div className="min-h-screen bg-transparent text-slate-50 pt-24 px-8 pb-20">
@@ -245,7 +254,7 @@ export default function TimesheetPage() {
       {/* ============================================
           ADMIN LINK
       ============================================ */}
-      {isAdmin && (
+      {isPrivileged && (
         <div className="mb-12">
           <Link
             href="/timesheet/admin"
