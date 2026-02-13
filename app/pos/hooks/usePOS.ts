@@ -62,6 +62,8 @@ export type Customer = {
   blacklist_reason: string | null;
   blacklist_start: string | null;
   blacklist_end: string | null;
+
+  note?: string | null;
 };
 
 export type Discount = {
@@ -128,7 +130,12 @@ function isNoVehiclePlaceholder(v: Vehicle) {
   return m === "n/a" && model === "no vehicle" && Number(v.base_price ?? 0) === 0 && cat === "n/a";
 }
 
-const STANDALONE_MOD_NAMES = new Set(["repair", "repair kit", "screwdriver", "raffle ticket"].map((s) => s.toLowerCase().trim()));
+// ✅ Allow these to sell without vehicle selected (flat-priced)
+const STANDALONE_MOD_NAMES = new Set(
+  ["repair", "repair kit", "screwdriver", "raffle ticket"].map((s) => s.toLowerCase().trim())
+);
+
+const RAFFLE_MOD_NAMES = new Set(["raffle ticket"].map((s) => s.toLowerCase().trim()));
 
 function todayYMD() {
   return new Date().toISOString().slice(0, 10);
@@ -146,6 +153,10 @@ function isMembershipActive(c: Customer | null) {
 
   const t = todayYMD();
   return s <= t && t <= e;
+}
+
+function isRaffleLineItem(item: CartItem) {
+  return RAFFLE_MOD_NAMES.has(String(item.mod_name ?? "").toLowerCase().trim());
 }
 
 export default function usePOS({ staffId }: UsePOSArgs) {
@@ -284,7 +295,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const isAllowedFlatOnInactive = (mod: ModNode) => {
     if (mod.pricing_type !== "flat") return false;
     const name = (mod.name ?? "").toLowerCase().trim();
-    return name === "repair" || name === "repair kit" || name === "screwdriver";
+    return name === "repair" || name === "repair kit" || name === "screwdriver" || name === "raffle ticket";
   };
 
   const isInCosmeticsPath = (modId: string) => {
@@ -326,7 +337,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       const flatWhitelistOk = isAllowedFlatOnInactive(mod);
 
       if (!cosmeticsOk && !flatWhitelistOk) {
-        alert("Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, or Screwdriver.");
+        alert("Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, Screwdriver, or Raffle Ticket.");
         return;
       }
     }
@@ -432,29 +443,48 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   // -------------------------
-  // TOTALS
+  // TOTALS (NO DISCOUNTS ON RAFFLE)
   // -------------------------
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const cartHasRaffle = cart.some(isRaffleLineItem);
 
-  const membershipPct = selectedCustomerType === "customer" && isMembershipActive(selectedCustomer) ? 10 : 0;
-  const discountPercent = discount ? Number(discount.percent ?? 0) : 0;
+  const raffleSubtotal = cart
+    .filter(isRaffleLineItem)
+    .reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  // Use MAX so membership doesn't stack with other discount
+  const nonRaffleSubtotal = cart
+    .filter((c) => !isRaffleLineItem(c))
+    .reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  // Discounts/membership apply ONLY to non-raffle and ONLY for real customers (not staff)
+  const membershipPct =
+    !cartHasRaffle && selectedCustomerType === "customer" && isMembershipActive(selectedCustomer) ? 10 : 0;
+
+  const discountPercent = !cartHasRaffle && discount ? Number(discount.percent ?? 0) : 0;
+
   const effectiveDiscountPercent =
     selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
 
-  const discountAmount = roundToCents((subtotal * effectiveDiscountPercent) / 100);
-  const afterDiscount = roundToCents(subtotal - discountAmount);
+  const nonRaffleDiscountAmount = roundToCents((nonRaffleSubtotal * effectiveDiscountPercent) / 100);
+  const nonRaffleAfterDiscount = roundToCents(nonRaffleSubtotal - nonRaffleDiscountAmount);
 
-  // Staff pricing (25% off) only for staff sales
+  // Staff pricing (25% off) applies ONLY to non-raffle
   const staffMultiplier = selectedCustomerType === "staff" ? 0.75 : 1;
-  const staffDiscountAmount = roundToCents(afterDiscount * (1 - staffMultiplier));
+  const nonRaffleStaffDiscountAmount = roundToCents(nonRaffleAfterDiscount * (1 - staffMultiplier));
+  const nonRaffleRawTotal = roundToCents(nonRaffleAfterDiscount * staffMultiplier);
+  const nonRaffleTotal = Math.ceil(nonRaffleRawTotal);
 
-  const rawTotal = roundToCents(afterDiscount * staffMultiplier);
-  const total = Math.ceil(rawTotal);
+  // Raffle portion is ALWAYS full price
+  const raffleTotal = Math.ceil(roundToCents(raffleSubtotal));
+
+  // Combined
+  const subtotal = roundToCents(nonRaffleSubtotal + raffleSubtotal);
+  const discountAmount = roundToCents(nonRaffleDiscountAmount); // raffle never contributes
+  const staffDiscountAmount = roundToCents(nonRaffleStaffDiscountAmount); // raffle never contributes
+
+  const total = Math.ceil(roundToCents(nonRaffleTotal + raffleTotal));
 
   // -------------------------
-  // BLACKLIST CHECK (permanent if dates missing)
+  // BLACKLIST CHECK
   // -------------------------
   useEffect(() => {
     if (!selectedCustomer) {
@@ -490,12 +520,19 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const displaySubtotal = roundToCents(subtotal * blacklistMultiplier);
   const displayDiscountAmount = roundToCents(discountAmount * blacklistMultiplier);
   const displayStaffDiscountAmount = roundToCents(staffDiscountAmount * blacklistMultiplier);
+
+  // IMPORTANT:
+  // Blacklist multiplier applies to TOTAL as well (stored server-side does this too)
   const displayTotal = Math.ceil(total * blacklistMultiplier);
 
   // -------------------------
   // CUSTOMER SELECTION
   // -------------------------
-  const handleSelectCustomer = (customer: Customer, disc: Discount | null, customerType: SelectedCustomerType = "customer") => {
+  const handleSelectCustomer = (
+    customer: Customer,
+    disc: Discount | null,
+    customerType: SelectedCustomerType = "customer"
+  ) => {
     setSelectedCustomer(customer);
     setSelectedCustomerType(customerType);
     setDiscount(disc);
@@ -552,8 +589,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const staffCustomerId =
       selectedCustomerType === "staff" && selectedCustomer ? Math.abs(Number(selectedCustomer.id)) : null;
 
-    // Only customers can use voucher
-    const voucherAllowed = selectedCustomerType === "customer" && selectedCustomer != null;
+    // Voucher rules:
+    // - Only real customers can use voucher
+    // - Voucher cannot be used on raffle ticket sales (server enforces too)
+    const voucherAllowed = selectedCustomerType === "customer" && selectedCustomer != null && !cartHasRaffle;
     const voucherBalance = voucherAllowed ? Number(selectedCustomer!.voucher_amount ?? 0) : 0;
 
     let voucherUsed = 0;
@@ -561,14 +600,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       voucherUsed = roundToCents(Math.min(Math.max(0, voucherBalance), Math.max(0, displayTotal)));
     }
 
-    // Force split if voucher isn't enough and they tried voucher-only
     const cardCharge = roundToCents(Math.max(0, displayTotal - voucherUsed));
     const finalMethod =
       voucherUsed > 0 && cardCharge > 0 ? "split" : voucherUsed > 0 ? "voucher" : "card";
 
-    const payNote = `[PAYMENT: ${finalMethod.toUpperCase()} | voucher_used=$${voucherUsed.toFixed(2)} | card_charge=$${cardCharge.toFixed(
+    const payNote = `[PAYMENT: ${finalMethod.toUpperCase()} | voucher_used=$${voucherUsed.toFixed(
       2
-    )}]`;
+    )} | card_charge=$${cardCharge.toFixed(2)}]`;
 
     const finalNote = (blacklistMultiplier === 2 ? "[BLACKLISTED x2] " : "") + (note?.trim() || "");
 
@@ -584,12 +622,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         staff_customer_id: staffCustomerId,
         customer_is_staff: selectedCustomerType === "staff",
 
-        discount_id: discount ? discount.id : null,
+        // ✅ No discounts on raffle ticket sales
+        discount_id: cartHasRaffle ? null : discount ? discount.id : null,
+
         vehicle_base_price: orderVehicleBasePrice,
 
         plate: plate.trim() || null,
         note: `${payNote} ${finalNote}`.trim() || null,
 
+        // ✅ No voucher on raffle sales
         voucher_used: voucherAllowed ? voucherUsed : 0,
 
         lines: cart.map((c) => ({
@@ -642,6 +683,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     selectedCustomerType,
     discount,
 
+    // Keep names consistent with your UI:
     originalTotal: displaySubtotal,
     discountAmount: displayDiscountAmount,
     staffDiscountAmount: displayStaffDiscountAmount,

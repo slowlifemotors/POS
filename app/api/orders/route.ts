@@ -26,15 +26,6 @@ function toUuid(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function roleLower(role: unknown) {
-  return typeof role === "string" ? role.toLowerCase().trim() : "";
-}
-
-function isManagerOrAbove(role: unknown) {
-  const r = roleLower(role);
-  return r === "owner" || r === "admin" || r === "manager";
-}
-
 function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
@@ -119,6 +110,94 @@ async function getMembershipDiscountPercent(customer_id: number | null): Promise
   return start <= t && t <= end ? 10 : 0;
 }
 
+function isRaffleTicketLine(modName: unknown) {
+  const s = typeof modName === "string" ? modName.trim().toLowerCase() : "";
+  return s === "raffle ticket";
+}
+
+async function resolveCustomerNameSnapshot(args: {
+  customer_is_staff: boolean;
+  customer_id: number | null;
+  staff_customer_id: number | null;
+}): Promise<{ customer_id: number | null; customer_name: string }> {
+  if (args.customer_is_staff) {
+    if (args.staff_customer_id && args.staff_customer_id > 0) {
+      const { data } = await supabaseServer
+        .from("staff")
+        .select("id, name")
+        .eq("id", args.staff_customer_id)
+        .maybeSingle();
+
+      const nm = String(data?.name ?? "").trim();
+      if (nm) return { customer_id: null, customer_name: nm };
+      return { customer_id: null, customer_name: `Staff #${args.staff_customer_id}` };
+    }
+    return { customer_id: null, customer_name: "Staff" };
+  }
+
+  if (args.customer_id && args.customer_id > 0) {
+    const { data } = await supabaseServer
+      .from("customers")
+      .select("id, name")
+      .eq("id", args.customer_id)
+      .maybeSingle();
+
+    const nm = String(data?.name ?? "").trim();
+    if (nm) return { customer_id: args.customer_id, customer_name: nm };
+    return { customer_id: args.customer_id, customer_name: `Customer #${args.customer_id}` };
+  }
+
+  return { customer_id: null, customer_name: "Unknown" };
+}
+
+async function writeRaffleSalesLog(args: {
+  order_id: string;
+  staff_id: number;
+  sold_at: string | null;
+  customer_is_staff: boolean;
+  customer_id: number | null;
+  staff_customer_id: number | null;
+  raffleTickets: number;
+}) {
+  if (!args.order_id || args.raffleTickets <= 0) return;
+
+  const snap = await resolveCustomerNameSnapshot({
+    customer_is_staff: args.customer_is_staff,
+    customer_id: args.customer_id,
+    staff_customer_id: args.staff_customer_id,
+  });
+
+  // Find one raffle line id for traceability (optional)
+  const { data: raffleLine } = await supabaseServer
+    .from("order_lines")
+    .select("id")
+    .eq("order_id", args.order_id)
+    .ilike("mod_name", "Raffle Ticket")
+    .eq("is_voided", false)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const order_line_id = typeof raffleLine?.id === "string" ? raffleLine.id : null;
+
+  const sold_at = args.sold_at && typeof args.sold_at === "string" ? args.sold_at : new Date().toISOString();
+
+  const { error } = await supabaseServer.from("raffle_sales_log").insert({
+    customer_id: snap.customer_id,
+    customer_name: snap.customer_name,
+    tickets: args.raffleTickets,
+    sold_at,
+    order_id: args.order_id,
+    order_line_id,
+    staff_id: args.staff_id,
+  });
+
+  if (error) {
+    // Best-effort only: do not break checkout
+    console.error("writeRaffleSalesLog insert error:", error);
+  }
+}
+
 /**
  * GET /api/orders?status=paid|voided|all
  * Lists recent orders — manager+ only
@@ -129,7 +208,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  if (!isManagerOrAbove(session.staff.role)) {
+  const role = String(session.staff.role ?? "").toLowerCase().trim();
+  const isManagerOrAbove = role === "owner" || role === "admin" || role === "manager";
+  if (!isManagerOrAbove) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -168,11 +249,11 @@ export async function GET(req: Request) {
 
 /**
  * POST /api/orders
- * - Recomputes totals server-side
- * - Staff sale forces 25% off
- * - Blacklisted customer doubles (x2)
- * - ✅ Membership gives 10% discount (max with existing discount)
- * - ✅ Voucher usage deducted from customer.voucher_amount if provided
+ *
+ * ✅ Raffle rule:
+ * - Raffle tickets are always full price: NO staff 25%, NO discount_id, NO membership %, NO voucher.
+ * - But the sale MUST still complete (including staff-as-customer orders).
+ * - Raffle log is appended after successful checkout.
  */
 export async function POST(req: Request) {
   const session = await requireSession(req);
@@ -257,90 +338,47 @@ export async function POST(req: Request) {
       if (!staff_customer_id || staff_customer_id <= 0) {
         return NextResponse.json({ error: "staff_customer_id is required for staff sales" }, { status: 400 });
       }
-      // Voucher not allowed on staff sales
+      // Voucher not allowed on staff sales (existing rule)
       if (voucher_used > 0) {
         return NextResponse.json({ error: "voucher_used is not allowed for staff sales" }, { status: 400 });
       }
     }
 
+    // Detect raffle ticket quantity (sum of quantities)
+    const raffleTickets = lines.reduce((sum, l) => {
+      if (!isRaffleTicketLine(l.mod_name)) return sum;
+      return sum + Math.max(0, toNumber(l.quantity, 0));
+    }, 0);
+
+    const hasRaffleTickets = raffleTickets > 0;
+
+    // ✅ If raffle exists, force-disable discount inputs but DO NOT BLOCK THE SALE.
+    const forcedDiscountId: number | null = hasRaffleTickets ? null : discount_id;
+    const forcedVoucherUsed = hasRaffleTickets ? 0 : voucher_used;
+
     // -------------------------
-    // SERVER-TRUSTED TOTALS
+    // SERVER-TRUSTED SUBTOTAL
     // -------------------------
     const computedSubtotal = roundToCents(
       lines.reduce((sum, l) => sum + toNumber(l.quantity) * toNumber(l.computed_price), 0)
     );
 
-    // ✅ Blacklist multiplier only for real customers
+    // ✅ Blacklist multiplier only for real customers (never staff sale)
     const blacklistMultiplier = customer_is_staff ? 1 : await getBlacklistMultiplier(customer_id);
 
-    // Staff sale branch
-    if (customer_is_staff) {
-      const staffSubtotal = roundToCents(computedSubtotal * 0.75);
-      const staffDiscountAmount = roundToCents(computedSubtotal - staffSubtotal);
-      const staffTotal = Math.ceil(roundToCents(computedSubtotal - staffDiscountAmount));
+    // ✅ Staff discount applies ONLY if NOT raffle
+    const staffDiscountEligible = customer_is_staff && !hasRaffleTickets;
 
-      const { data: order, error: orderErr } = await supabaseServer
-        .from("orders")
-        .insert({
-          status: "paid",
-          vehicle_id,
-          staff_id,
-
-          customer_id: null,
-          staff_customer_id,
-          customer_is_staff: true,
-
-          discount_id: null,
-          vehicle_base_price,
-          plate,
-
-          subtotal: computedSubtotal,
-          discount_amount: staffDiscountAmount,
-          total: staffTotal,
-
-          note,
-        })
-        .select("id")
-        .single();
-
-      if (orderErr || !order) {
-        console.error("POST /api/orders order insert error:", orderErr);
-        return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
-      }
-
-      const order_id = order.id as string;
-
-      const lineRows = lines.map((l) => ({
-        order_id,
-        vehicle_id,
-        mod_id: toUuid(l.mod_id),
-        mod_name: String(l.mod_name ?? "").trim(),
-        quantity: toNumber(l.quantity, 1),
-        unit_price: toNumber(l.computed_price),
-        pricing_type: l.pricing_type,
-        pricing_value: toNumber(l.pricing_value),
-      }));
-
-      const { error: linesErr } = await supabaseServer.from("order_lines").insert(lineRows);
-
-      if (linesErr) {
-        console.error("POST /api/orders lines insert error:", linesErr);
-        await supabaseServer.from("orders").delete().eq("id", order_id);
-        return NextResponse.json({ error: "Failed to create order lines" }, { status: 500 });
-      }
-
-      return NextResponse.json({ order_id }, { status: 200 });
-    }
-
-    // Normal discount flow
+    // -------------------------
+    // Discount percent (normal customer only)
+    // -------------------------
     let discountPercent = 0;
-    let finalDiscountId: number | null = discount_id;
 
-    if (finalDiscountId) {
+    if (!customer_is_staff && forcedDiscountId) {
       const { data: disc, error: discErr } = await supabaseServer
         .from("discounts")
         .select("percent")
-        .eq("id", finalDiscountId)
+        .eq("id", forcedDiscountId)
         .maybeSingle();
 
       if (discErr) {
@@ -351,24 +389,37 @@ export async function POST(req: Request) {
       discountPercent = Number(disc?.percent ?? 0);
     }
 
-    // ✅ membership discount (10%) and use MAX
-    const membershipPercent = await getMembershipDiscountPercent(customer_id);
-    const effectiveDiscountPercent = Math.max(discountPercent, membershipPercent);
+    // ✅ membership discount (10%) and use MAX — but NOT for raffle
+    const membershipPercent =
+      !customer_is_staff && !hasRaffleTickets ? await getMembershipDiscountPercent(customer_id) : 0;
 
-    const computedDiscountAmount = roundToCents((computedSubtotal * effectiveDiscountPercent) / 100);
-    const computedRawTotal = roundToCents(computedSubtotal - computedDiscountAmount);
-    const computedTotal = Math.ceil(computedRawTotal);
+    const effectiveDiscountPercent =
+      !customer_is_staff && !hasRaffleTickets ? Math.max(discountPercent, membershipPercent) : 0;
+
+    // -------------------------
+    // Compute totals (pre-blacklist)
+    // -------------------------
+    let discountAmount = roundToCents((computedSubtotal * effectiveDiscountPercent) / 100);
+    let rawTotal = roundToCents(computedSubtotal - discountAmount);
+    let total = Math.ceil(rawTotal);
+
+    // ✅ Apply staff 25% discount ONLY if eligible (NOT raffle)
+    if (staffDiscountEligible) {
+      const staffSubtotal = roundToCents(computedSubtotal * 0.75);
+      discountAmount = roundToCents(computedSubtotal - staffSubtotal);
+      rawTotal = roundToCents(computedSubtotal - discountAmount);
+      total = Math.ceil(rawTotal);
+    }
 
     // ✅ Apply blacklist multiplier to stored totals AND line unit prices
     const finalSubtotal = roundToCents(computedSubtotal * blacklistMultiplier);
-    const finalDiscountAmount = roundToCents(computedDiscountAmount * blacklistMultiplier);
-    const finalTotal = Math.ceil(computedTotal * blacklistMultiplier);
+    const finalDiscountAmount = roundToCents(discountAmount * blacklistMultiplier);
+    const finalTotal = Math.ceil(total * blacklistMultiplier);
 
-    // ✅ Voucher rules: only for real customers
+    // ✅ Voucher rules: only for real customers AND not raffle AND not staff
     let safeVoucherUsed = 0;
 
-    if (customer_id && voucher_used > 0) {
-      // Load current voucher balance
+    if (!customer_is_staff && !hasRaffleTickets && customer_id && forcedVoucherUsed > 0) {
       const { data: cust, error: custErr } = await supabaseServer
         .from("customers")
         .select("voucher_amount")
@@ -381,7 +432,7 @@ export async function POST(req: Request) {
       }
 
       const balance = roundToCents(Math.max(0, Number(cust?.voucher_amount ?? 0)));
-      safeVoucherUsed = roundToCents(Math.min(balance, Math.max(0, finalTotal), voucher_used));
+      safeVoucherUsed = roundToCents(Math.min(balance, Math.max(0, finalTotal), forcedVoucherUsed));
     }
 
     const voucherNote =
@@ -389,7 +440,12 @@ export async function POST(req: Request) {
         ? ` [VOUCHER_USED=$${safeVoucherUsed.toFixed(2)} | CARD_CHARGE=$${roundToCents(finalTotal - safeVoucherUsed).toFixed(2)}]`
         : "";
 
-    const finalNote = (blacklistMultiplier === 2 ? "[BLACKLISTED x2] " : "") + (note ?? "");
+    const flagsNoteParts: string[] = [];
+    if (blacklistMultiplier === 2) flagsNoteParts.push("[BLACKLISTED x2]");
+    if (hasRaffleTickets) flagsNoteParts.push("[RAFFLE_NO_DISCOUNTS]");
+
+    const prefix = flagsNoteParts.length ? `${flagsNoteParts.join(" ")} ` : "";
+    const finalNote = prefix + (note ?? "");
     const savedNote = (finalNote + voucherNote).trim() ? (finalNote + voucherNote).trim() : null;
 
     // -------------------------
@@ -401,18 +457,23 @@ export async function POST(req: Request) {
         status: "paid",
         vehicle_id,
         staff_id,
-        customer_id,
-        staff_customer_id: null,
-        discount_id: finalDiscountId,
-        customer_is_staff: false,
+
+        customer_id: customer_is_staff ? null : customer_id,
+        staff_customer_id: customer_is_staff ? staff_customer_id : null,
+        customer_is_staff: customer_is_staff,
+
+        discount_id: customer_is_staff ? null : forcedDiscountId,
+
         vehicle_base_price,
         plate,
+
         subtotal: finalSubtotal,
         discount_amount: finalDiscountAmount,
         total: finalTotal,
+
         note: savedNote,
       })
-      .select("id")
+      .select("id, created_at")
       .single();
 
     if (orderErr || !order) {
@@ -421,6 +482,7 @@ export async function POST(req: Request) {
     }
 
     const order_id = order.id as string;
+    const order_created_at = typeof (order as any)?.created_at === "string" ? (order as any).created_at : null;
 
     // Insert order lines (blacklist doubles unit_price)
     const lineRows = lines.map((l) => ({
@@ -442,8 +504,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Failed to create order lines" }, { status: 500 });
     }
 
-    // ✅ Deduct voucher balance AFTER successful order+lines
-    if (customer_id && safeVoucherUsed > 0) {
+    // ✅ Append raffle log AFTER successful order+lines
+    if (hasRaffleTickets) {
+      await writeRaffleSalesLog({
+        order_id,
+        staff_id,
+        sold_at: order_created_at,
+        customer_is_staff,
+        customer_id: customer_is_staff ? null : customer_id,
+        staff_customer_id: customer_is_staff ? staff_customer_id : null,
+        raffleTickets,
+      });
+    }
+
+    // ✅ Deduct voucher balance AFTER successful order+lines (if allowed)
+    if (!customer_is_staff && !hasRaffleTickets && customer_id && safeVoucherUsed > 0) {
       const { data: cust, error: custErr } = await supabaseServer
         .from("customers")
         .select("voucher_amount")

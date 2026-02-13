@@ -40,12 +40,8 @@ export async function GET(req: Request) {
 
   try {
     const url = new URL(req.url);
-
     const start = asYMD(url.searchParams.get("start"));
     const end = asYMD(url.searchParams.get("end"));
-
-    const itemNameRaw = (url.searchParams.get("itemName") ?? "Raffle Ticket").trim();
-    const itemName = itemNameRaw || "Raffle Ticket";
 
     if (!start || !end) {
       return NextResponse.json({ error: "start and end (YYYY-MM-DD) are required" }, { status: 400 });
@@ -54,74 +50,62 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "start must be <= end" }, { status: 400 });
     }
 
-    // Pull all order_lines matching "Raffle Ticket" in a paid order within range.
-    // Note: this assumes tickets are sold via order_lines.mod_name = "Raffle Ticket"
-    // and orders.customer_id points to customers.
     const { data, error } = await supabaseServer
-      .from("order_lines")
-      .select(
-        `
-        id,
-        quantity,
-        mod_name,
-        orders!inner(
-          id,
-          created_at,
-          status,
-          customer_id,
-          customer_is_staff,
-          customers!inner(
-            id,
-            name
-          )
-        )
-      `
-      )
-      .ilike("mod_name", itemName)
-      .eq("orders.status", "paid")
-      .eq("orders.customer_is_staff", false)
-      .not("orders.customer_id", "is", null)
-      .gte("orders.created_at", startOfDayISO(start))
-      .lte("orders.created_at", endOfDayISO(end))
-      .limit(100000);
+      .from("raffle_sales_log")
+      .select("customer_id, customer_name, tickets, sold_at, deleted_at")
+      .is("deleted_at", null)
+      .gte("sold_at", startOfDayISO(start))
+      .lte("sold_at", endOfDayISO(end))
+      .limit(200000);
 
     if (error) {
-      console.error("raffle summary error:", error);
+      console.error("raffle summary (log) error:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const rows = Array.isArray(data) ? data : [];
+    const rows = Array.isArray(data) ? (data as any[]) : [];
 
-    const byCustomer = new Map<number, { customer_id: number; name: string; tickets: number }>();
+    // Group by (customer_id??0 + customer_name)
+    const keyOf = (cid: unknown, name: unknown) => {
+      const id = Number(cid ?? 0);
+      const safeId = Number.isFinite(id) ? id : 0;
+      const nm = String(name ?? "").trim() || "Unknown";
+      return `${safeId}::${nm.toLowerCase()}`;
+    };
 
-    for (const r of rows as any[]) {
-      const qty = Number(r?.quantity ?? 0);
-      if (!Number.isFinite(qty) || qty <= 0) continue;
+    const agg = new Map<string, { customer_id: number; name: string; tickets: number }>();
 
-      const cust = r?.orders?.customers;
-      const cid = Number(cust?.id ?? 0);
-      if (!Number.isFinite(cid) || cid <= 0) continue;
+    for (const r of rows) {
+      const t = Number(r?.tickets ?? 0);
+      if (!Number.isFinite(t) || t <= 0) continue;
 
-      const name = String(cust?.name ?? "").trim() || `Customer #${cid}`;
-      const prev = byCustomer.get(cid);
+      const cidRaw = Number(r?.customer_id ?? 0);
+      const cid = Number.isFinite(cidRaw) ? cidRaw : 0;
+      const name = String(r?.customer_name ?? "").trim() || (cid ? `Customer #${cid}` : "Unknown");
 
-      if (!prev) {
-        byCustomer.set(cid, { customer_id: cid, name, tickets: qty });
+      const k = keyOf(cid, name);
+      const cur = agg.get(k);
+      if (!cur) {
+        agg.set(k, { customer_id: cid, name, tickets: t });
       } else {
-        prev.tickets += qty;
+        cur.tickets += t;
       }
     }
 
-    const customers = Array.from(byCustomer.values()).sort((a, b) => b.tickets - a.tickets);
-    const totalTickets = customers.reduce((sum, c) => sum + c.tickets, 0);
+    const outRows = Array.from(agg.values())
+      .filter((x) => x.tickets > 0)
+      .sort((a, b) => b.tickets - a.tickets);
 
+    const total_tickets = outRows.reduce((sum, r) => sum + r.tickets, 0);
+
+    // Match your raffle page expectations (it already handles rows + total_tickets)
     return NextResponse.json(
       {
         start,
         end,
-        itemName,
-        totalTickets,
-        customers,
+        total_customers: outRows.length,
+        total_tickets,
+        rows: outRows,
       },
       { status: 200 }
     );

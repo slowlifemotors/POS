@@ -13,7 +13,6 @@ type RaffleCustomer = {
 type SummaryResponse = {
   start: string;
   end: string;
-  itemName: string;
   totalTickets: number;
   customers: RaffleCustomer[];
 };
@@ -28,11 +27,12 @@ type WinnerResponse = SummaryResponse & {
   };
 };
 
-function todayYMD() {
+function todayYMDLocal() {
+  // Use local date for the input[type=date] default
   const d = new Date();
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
@@ -58,9 +58,8 @@ function describeArc(cx: number, cy: number, r: number, startAngle: number, endA
 export default function RafflePage() {
   const router = useRouter();
 
-  const [start, setStart] = useState<string>(todayYMD());
-  const [end, setEnd] = useState<string>(todayYMD());
-  const [itemName, setItemName] = useState<string>("Raffle Ticket");
+  const [start, setStart] = useState<string>(todayYMDLocal());
+  const [end, setEnd] = useState<string>(todayYMDLocal());
 
   const [loading, setLoading] = useState(false);
   const [spinning, setSpinning] = useState(false);
@@ -73,7 +72,7 @@ export default function RafflePage() {
   const [rotationDeg, setRotationDeg] = useState<number>(0);
   const spinTimerRef = useRef<number | null>(null);
 
-  // Basic auth gate (matches your existing style)
+  // Basic auth gate (admin/owner/manager only)
   useEffect(() => {
     async function check() {
       const res = await fetch("/api/auth/session", { cache: "no-store" });
@@ -98,29 +97,49 @@ export default function RafflePage() {
     }
   }
 
+  function validateRange() {
+    if (!start || !end) return "Pick a start and end date.";
+    if (start > end) return "Start date must be on or before end date.";
+    return null;
+  }
+
   async function loadSummary() {
+    const rangeErr = validateRange();
+    if (rangeErr) {
+      setError(rangeErr);
+      return;
+    }
+
     setError(null);
     setLoading(true);
     setWinner(null);
 
     try {
+      // ✅ Updated to match the new API:
+      // /api/raffle/summary?start=YYYY-MM-DD&end=YYYY-MM-DD
       const res = await fetch(
-        `/api/raffle/summary?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&itemName=${encodeURIComponent(
-          itemName
-        )}`,
+        `/api/raffle/summary?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
         { cache: "no-store" }
       );
 
-      const json = (await safeJson(res)) as Partial<SummaryResponse> & { error?: string };
+      const json = (await safeJson(res)) as any;
 
       if (!res.ok) throw new Error(json?.error || `Failed to load summary (${res.status})`);
+
+      // New API shape:
+      // {
+      //   start, end,
+      //   total_customers, total_tickets,
+      //   rows: [{ customer_id, name, tickets }]
+      // }
+      const customers: RaffleCustomer[] = Array.isArray(json.rows) ? json.rows : [];
+      const totalTickets = Number(json.total_tickets ?? 0);
 
       setSummary({
         start: String(json.start ?? start),
         end: String(json.end ?? end),
-        itemName: String(json.itemName ?? itemName),
-        totalTickets: Number(json.totalTickets ?? 0),
-        customers: Array.isArray(json.customers) ? (json.customers as RaffleCustomer[]) : [],
+        totalTickets,
+        customers,
       });
     } catch (e: any) {
       setSummary(null);
@@ -137,61 +156,64 @@ export default function RafflePage() {
     }
     if (spinning) return;
 
+    const rangeErr = validateRange();
+    if (rangeErr) {
+      setError(rangeErr);
+      return;
+    }
+
     setError(null);
     setSpinning(true);
     setWinner(null);
 
     try {
+      // NOTE: This assumes your /api/raffle/winner endpoint exists.
+      // If your winner endpoint still expects itemName, update it to match summary API.
       const res = await fetch(
-        `/api/raffle/winner?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&itemName=${encodeURIComponent(
-          itemName
-        )}`,
+        `/api/raffle/winner?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
         { cache: "no-store" }
       );
 
-      const json = (await safeJson(res)) as Partial<WinnerResponse> & { error?: string };
+      const json = (await safeJson(res)) as any;
       if (!res.ok) throw new Error(json?.error || `Failed to pick winner (${res.status})`);
 
-      const customers = Array.isArray(json.customers) ? (json.customers as RaffleCustomer[]) : [];
-      const totalTickets = Number(json.totalTickets ?? 0);
+      // Expect winner endpoint to return the same shape as summary, plus winner + wheel data.
+      const customers: RaffleCustomer[] = Array.isArray(json.rows)
+        ? json.rows
+        : Array.isArray(json.customers)
+        ? json.customers
+        : [];
+
+      const totalTickets = Number(json.total_tickets ?? json.totalTickets ?? 0);
 
       const winnerObj =
-        json.winner && typeof json.winner === "object"
-          ? (json.winner as RaffleCustomer)
-          : null;
+        json.winner && typeof json.winner === "object" ? (json.winner as RaffleCustomer) : null;
 
       const targetAngle = Number(json?.wheel?.targetAngle ?? 0);
 
-      // Update summary list to match server response (same window)
+      // Keep table in sync with the server response
       setSummary({
         start: String(json.start ?? start),
         end: String(json.end ?? end),
-        itemName: String(json.itemName ?? itemName),
         totalTickets,
         customers,
       });
 
       // Wheel animation:
-      // We want the POINTER at top (0°) to land on "targetAngle" slice.
-      // Our wheel slices are defined in absolute angles from 0..360 (0° top CW).
-      // If we rotate the wheel by rot°, a slice at angle A moves to (A + rot) mod 360 under the pointer.
-      // To land targetAngle at pointer (0°), we need (targetAngle + rot) % 360 == 0 => rot == -targetAngle mod 360.
+      // pointer at top (0°) should land on targetAngle slice.
       const normalize = (a: number) => ((a % 360) + 360) % 360;
       const current = normalize(rotationDeg);
 
       const desired = normalize(360 - normalize(targetAngle)); // == (-targetAngle mod 360)
-      const extraSpins = 6 * 360; // big satisfying spin
+      const extraSpins = 6 * 360;
       const delta = normalize(desired - current);
 
       const finalRotation = rotationDeg + extraSpins + delta;
 
-      // Trigger CSS transition by setting rotation
-      // (We also clear any previous timer)
       if (spinTimerRef.current) window.clearTimeout(spinTimerRef.current);
 
       setRotationDeg(finalRotation);
 
-      // Show winner after animation completes
       spinTimerRef.current = window.setTimeout(() => {
         setWinner(winnerObj);
         setSpinning(false);
@@ -268,14 +290,6 @@ export default function RafflePage() {
         <div className="bg-slate-900 border border-slate-700 rounded-lg p-5">
           <h2 className="text-lg font-semibold mb-4">Filter</h2>
 
-          <label className="block text-sm text-slate-300 mb-1">Raffle Item Name</label>
-          <input
-            value={itemName}
-            onChange={(e) => setItemName(e.target.value)}
-            className="w-full mb-4 p-2 rounded bg-slate-800 border border-slate-700 text-slate-100"
-            placeholder='e.g. "Raffle Ticket"'
-          />
-
           <label className="block text-sm text-slate-300 mb-1">Start Date</label>
           <input
             type="date"
@@ -296,10 +310,12 @@ export default function RafflePage() {
             {summary ? (
               <>
                 <div className="mt-2">
-                  Total Tickets: <span className="text-slate-200 font-semibold">{summary.totalTickets}</span>
+                  Total Tickets:{" "}
+                  <span className="text-slate-200 font-semibold">{summary.totalTickets}</span>
                 </div>
                 <div className="mt-1">
-                  Customers: <span className="text-slate-200 font-semibold">{summary.customers.length}</span>
+                  Customers:{" "}
+                  <span className="text-slate-200 font-semibold">{summary.customers.length}</span>
                 </div>
               </>
             ) : (
@@ -333,7 +349,9 @@ export default function RafflePage() {
                 width: 360,
                 height: 360,
                 transform: `rotate(${rotationDeg}deg)`,
-                transition: spinning ? "transform 5s cubic-bezier(0.12, 0.88, 0.18, 1)" : "transform 200ms linear",
+                transition: spinning
+                  ? "transform 5s cubic-bezier(0.12, 0.88, 0.18, 1)"
+                  : "transform 200ms linear",
               }}
             >
               <svg width="360" height="360" viewBox="0 0 360 360" className="rounded-full">
@@ -348,16 +366,13 @@ export default function RafflePage() {
                   <circle cx="180" cy="180" r="170" fill="transparent" />
                 ) : (
                   wheelSlices.map((s, idx) => {
-                    // Alternate slice shading without picking explicit colors
                     const fill = idx % 2 === 0 ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)";
                     const d = describeArc(180, 180, 170, s.startA, s.endA);
 
-                    // Label position at slice mid-angle
                     const mid = (s.startA + s.endA) / 2;
                     const pt = polarToCartesian(180, 180, 110, mid);
 
-                    const display =
-                      s.name.length > 16 ? `${s.name.slice(0, 16).trim()}…` : s.name;
+                    const display = s.name.length > 16 ? `${s.name.slice(0, 16).trim()}…` : s.name;
 
                     return (
                       <g key={`${s.customer_id}-${idx}`} filter="url(#shadow)">
@@ -382,7 +397,13 @@ export default function RafflePage() {
                 )}
 
                 {/* Center */}
-                <circle cx="180" cy="180" r="38" fill="rgba(0,0,0,0.35)" stroke="rgba(255,255,255,0.15)" />
+                <circle
+                  cx="180"
+                  cy="180"
+                  r="38"
+                  fill="rgba(0,0,0,0.35)"
+                  stroke="rgba(255,255,255,0.15)"
+                />
                 <text
                   x="180"
                   y="180"
@@ -399,8 +420,8 @@ export default function RafflePage() {
           </div>
 
           <p className="mt-4 text-xs text-slate-400 text-center max-w-md">
-            Slice sizes are based on how many <span className="text-slate-200">{itemName}</span> items were sold to each customer
-            in PAID orders within the selected date range.
+            Slice sizes are based on how many <span className="text-slate-200">Raffle Ticket</span> items were sold to each
+            customer in PAID (non-voided) orders within the selected date range.
           </p>
         </div>
 

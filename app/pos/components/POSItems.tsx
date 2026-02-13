@@ -86,7 +86,8 @@ function isAllowedFlatOnInactive(node: ModNode) {
   return (
     name === "repair" ||
     name === "repair kit" ||
-    name === "screwdriver"
+    name === "screwdriver" ||
+    name === "raffle ticket"
   );
 }
 
@@ -165,8 +166,7 @@ export default function POSItems({
 
     const isFlat = node.pricing_type === "flat" && node.pricing_value != null;
 
-    const baseCanAdd =
-      isFlat || (hasVehicle && priceInfo.computed != null);
+    const baseCanAdd = isFlat || (hasVehicle && priceInfo.computed != null);
 
     /**
      * ✅ FINAL inactive rule:
@@ -195,7 +195,7 @@ export default function POSItems({
         }`}
         title={
           blockedByInactiveRule
-            ? "Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, or Screwdriver"
+            ? "Inactive vehicles can only receive Cosmetics, Repair, Repair Kit, Screwdriver, or Raffle Ticket"
             : "Add to cart"
         }
       >

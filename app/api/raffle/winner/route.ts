@@ -30,7 +30,6 @@ function endOfDayISO(ymd: string) {
 }
 
 function cryptoRandomFloat01() {
-  // Node runtime supports Web Crypto in Next.js
   const a = new Uint32Array(1);
   crypto.getRandomValues(a);
   return a[0] / 0xffffffff;
@@ -47,12 +46,8 @@ export async function GET(req: Request) {
 
   try {
     const url = new URL(req.url);
-
     const start = asYMD(url.searchParams.get("start"));
     const end = asYMD(url.searchParams.get("end"));
-
-    const itemNameRaw = (url.searchParams.get("itemName") ?? "Raffle Ticket").trim();
-    const itemName = itemNameRaw || "Raffle Ticket";
 
     if (!start || !end) {
       return NextResponse.json({ error: "start and end (YYYY-MM-DD) are required" }, { status: 400 });
@@ -62,75 +57,67 @@ export async function GET(req: Request) {
     }
 
     const { data, error } = await supabaseServer
-      .from("order_lines")
-      .select(
-        `
-        id,
-        quantity,
-        mod_name,
-        orders!inner(
-          id,
-          created_at,
-          status,
-          customer_id,
-          customer_is_staff,
-          customers!inner(
-            id,
-            name
-          )
-        )
-      `
-      )
-      .ilike("mod_name", itemName)
-      .eq("orders.status", "paid")
-      .eq("orders.customer_is_staff", false)
-      .not("orders.customer_id", "is", null)
-      .gte("orders.created_at", startOfDayISO(start))
-      .lte("orders.created_at", endOfDayISO(end))
-      .limit(100000);
+      .from("raffle_sales_log")
+      .select("customer_id, customer_name, tickets, sold_at, deleted_at")
+      .is("deleted_at", null)
+      .gte("sold_at", startOfDayISO(start))
+      .lte("sold_at", endOfDayISO(end))
+      .limit(200000);
 
     if (error) {
-      console.error("raffle winner error:", error);
+      console.error("raffle winner (log) error:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const rows = Array.isArray(data) ? data : [];
+    const rows = Array.isArray(data) ? (data as any[]) : [];
 
-    const byCustomer = new Map<number, { customer_id: number; name: string; tickets: number }>();
+    const keyOf = (cid: unknown, name: unknown) => {
+      const id = Number(cid ?? 0);
+      const safeId = Number.isFinite(id) ? id : 0;
+      const nm = String(name ?? "").trim() || "Unknown";
+      return `${safeId}::${nm.toLowerCase()}`;
+    };
 
-    for (const r of rows as any[]) {
-      const qty = Number(r?.quantity ?? 0);
-      if (!Number.isFinite(qty) || qty <= 0) continue;
+    const agg = new Map<string, { customer_id: number; name: string; tickets: number }>();
 
-      const cust = r?.orders?.customers;
-      const cid = Number(cust?.id ?? 0);
-      if (!Number.isFinite(cid) || cid <= 0) continue;
+    for (const r of rows) {
+      const t = Number(r?.tickets ?? 0);
+      if (!Number.isFinite(t) || t <= 0) continue;
 
-      const name = String(cust?.name ?? "").trim() || `Customer #${cid}`;
-      const prev = byCustomer.get(cid);
+      const cidRaw = Number(r?.customer_id ?? 0);
+      const cid = Number.isFinite(cidRaw) ? cidRaw : 0;
+      const name = String(r?.customer_name ?? "").trim() || (cid ? `Customer #${cid}` : "Unknown");
 
-      if (!prev) byCustomer.set(cid, { customer_id: cid, name, tickets: qty });
-      else prev.tickets += qty;
+      const k = keyOf(cid, name);
+      const cur = agg.get(k);
+      if (!cur) {
+        agg.set(k, { customer_id: cid, name, tickets: t });
+      } else {
+        cur.tickets += t;
+      }
     }
 
-    const customers = Array.from(byCustomer.values()).sort((a, b) => b.tickets - a.tickets);
-    const totalTickets = customers.reduce((sum, c) => sum + c.tickets, 0);
+    const outRows = Array.from(agg.values())
+      .filter((x) => x.tickets > 0)
+      .sort((a, b) => b.tickets - a.tickets);
 
-    if (customers.length === 0 || totalTickets <= 0) {
+    const total_tickets = outRows.reduce((sum, r) => sum + r.tickets, 0);
+
+    if (outRows.length === 0 || total_tickets <= 0) {
       return NextResponse.json(
-        { start, end, itemName, totalTickets: 0, customers: [], winner: null },
+        { start, end, total_customers: 0, total_tickets: 0, rows: [], winner: null },
         { status: 200 }
       );
     }
 
     // Weighted pick: random integer in [1..totalTickets]
     const r01 = cryptoRandomFloat01();
-    const pick = Math.floor(r01 * totalTickets) + 1;
+    const pick = Math.floor(r01 * total_tickets) + 1;
 
     let running = 0;
-    let winner = customers[0];
+    let winner = outRows[0];
 
-    for (const c of customers) {
+    for (const c of outRows) {
       running += c.tickets;
       if (pick <= running) {
         winner = c;
@@ -138,19 +125,17 @@ export async function GET(req: Request) {
       }
     }
 
-    // Wheel geometry (degrees):
-    // We'll define 0° at top (12 o'clock) and clockwise rotation.
-    // Return the winner's segment [startAngle, endAngle] and a targetAngle within it.
+    // Wheel geometry (same logic as before)
     let angleCursor = 0;
     let winnerStart = 0;
     let winnerEnd = 0;
 
-    for (const c of customers) {
-      const span = (c.tickets / totalTickets) * 360;
+    for (const c of outRows) {
+      const span = (c.tickets / total_tickets) * 360;
       const startA = angleCursor;
       const endA = angleCursor + span;
 
-      if (c.customer_id === winner.customer_id) {
+      if (c.customer_id === winner.customer_id && c.name === winner.name) {
         winnerStart = startA;
         winnerEnd = endA;
         break;
@@ -158,7 +143,6 @@ export async function GET(req: Request) {
       angleCursor = endA;
     }
 
-    // Pick a point safely inside their slice so the pointer doesn't land on a border
     const pad = Math.min(3, Math.max(0.25, (winnerEnd - winnerStart) * 0.08));
     const innerStart = winnerStart + pad;
     const innerEnd = winnerEnd - pad;
@@ -170,9 +154,9 @@ export async function GET(req: Request) {
       {
         start,
         end,
-        itemName,
-        totalTickets,
-        customers,
+        total_customers: outRows.length,
+        total_tickets,
+        rows: outRows,
         winner,
         wheel: {
           pick,

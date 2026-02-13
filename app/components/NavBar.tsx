@@ -91,8 +91,11 @@ export default function NavBar({
           { label: "Pays", href: "/payments" },
           { label: "Discounts", href: "/discounts" },
 
-          // ✅ NEW: Raffle (admin/owner/manager only, same as Management access)
+          // ✅ Raffle
           { label: "Raffle", href: "/raffle" },
+
+          // ✅ NEW: Raffle Logs (manager+ can view; delete enforced server-side)
+          { label: "Raffle Logs", href: "/raffle/admin" },
 
           { label: "Settings", href: "/settings" },
         ],
