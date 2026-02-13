@@ -9,6 +9,15 @@ const supabase = createClient(
   { auth: { persistSession: false } }
 );
 
+function roundToCents(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+function isRaffleTicketLine(modName: unknown) {
+  const s = typeof modName === "string" ? modName.trim().toLowerCase() : "";
+  return s === "raffle ticket";
+}
+
 /* ---------------------------------------------------------
    PAY PERIOD
 --------------------------------------------------------- */
@@ -45,6 +54,42 @@ async function getHours(staff_id: number, start: Date, end: Date) {
 }
 
 /* ---------------------------------------------------------
+   RAFFLE REVENUE MAP (per order)
+   - Excludes voided lines
+--------------------------------------------------------- */
+async function getRaffleRevenueByOrderId(orderIds: string[]) {
+  const map = new Map<string, number>();
+  if (!orderIds.length) return map;
+
+  const { data, error } = await supabase
+    .from("order_lines")
+    .select("order_id, mod_name, quantity, unit_price, is_voided")
+    .in("order_id", orderIds)
+    .eq("is_voided", false);
+
+  if (error) {
+    console.error("getRaffleRevenueByOrderId error:", error);
+    return map;
+  }
+
+  for (const row of data ?? []) {
+    const oid = String((row as any).order_id ?? "");
+    if (!oid) continue;
+
+    if (!isRaffleTicketLine((row as any).mod_name)) continue;
+
+    const qty = Number((row as any).quantity ?? 0);
+    const unit = Number((row as any).unit_price ?? 0);
+    if (qty <= 0 || unit <= 0) continue;
+
+    const cur = map.get(oid) ?? 0;
+    map.set(oid, roundToCents(cur + qty * unit));
+  }
+
+  return map;
+}
+
+/* ---------------------------------------------------------
    COMMISSION
    GAME RULE:
    - Checkout price is doubled (profit is exactly half of what customer pays)
@@ -53,6 +98,11 @@ async function getHours(staff_id: number, start: Date, end: Date) {
 
    IMPORTANT:
    - Staff sales (customer_is_staff=true) MUST NOT count toward commission
+
+   ✅ RAFFLE RULE:
+   - Raffle tickets IGNORE normal commission rate
+   - Raffle commission is ALWAYS 20% of ticket sale price
+   - Normal commission is computed on PROFIT EXCLUDING raffle revenue
 --------------------------------------------------------- */
 async function getCommission(
   staff_id: number,
@@ -71,27 +121,45 @@ async function getCommission(
 
   if (error) {
     console.error("getCommission orders error:", error);
-    return { rate: commission_rate, profit: 0, value: 0 };
+    return { rate: Number(commission_rate || 0), profit: 0, value: 0 };
   }
 
   if (!orders || orders.length === 0) {
-    return { rate: commission_rate, profit: 0, value: 0 };
+    return { rate: Number(commission_rate || 0), profit: 0, value: 0 };
   }
 
-  let totalProfit = 0;
+  const orderIds = orders.map((o: any) => String(o.id)).filter(Boolean);
+  const raffleByOrder = await getRaffleRevenueByOrderId(orderIds);
+
+  let totalProfitExRaffle = 0;
+  let raffleRevenueTotal = 0;
 
   for (const o of orders) {
+    const orderId = String((o as any).id ?? "");
     const total = Number((o as any).total || 0);
-    if (total <= 0) continue;
-    totalProfit += total / 2;
+    if (!orderId || total <= 0) continue;
+
+    const raffleRevenue = Number(raffleByOrder.get(orderId) ?? 0);
+    raffleRevenueTotal += raffleRevenue;
+
+    // Normal profit is based on the portion of the order that is NOT raffle.
+    const nonRaffleTotal = Math.max(0, total - raffleRevenue);
+    totalProfitExRaffle += nonRaffleTotal / 2;
   }
 
-  const commissionValue = totalProfit * (Number(commission_rate || 0) / 100);
+  const normalCommissionValue =
+    totalProfitExRaffle * (Number(commission_rate || 0) / 100);
+
+  // ✅ Raffle commission: 20% of ticket sale price
+  const raffleCommissionValue = raffleRevenueTotal * 0.2;
+
+  const totalCommissionValue = normalCommissionValue + raffleCommissionValue;
 
   return {
     rate: Number(commission_rate || 0),
-    profit: totalProfit,
-    value: commissionValue,
+    // Profit displayed should reflect the profit base used for normal commission
+    profit: totalProfitExRaffle,
+    value: totalCommissionValue,
   };
 }
 
