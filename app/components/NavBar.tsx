@@ -82,7 +82,7 @@ export default function NavBar({
 
           ...(canManageMods ? [{ label: "Mods / Items", href: "/mods" }] : []),
 
-          // ✅ New: Jobs
+          // ✅ Jobs
           { label: "Jobs", href: "/jobs" },
 
           { label: "Live Staff", href: "/live" },
@@ -90,6 +90,10 @@ export default function NavBar({
           { label: "Commission Settings", href: "/settings/commission" },
           { label: "Pays", href: "/payments" },
           { label: "Discounts", href: "/discounts" },
+
+          // ✅ NEW: Raffle (admin/owner/manager only, same as Management access)
+          { label: "Raffle", href: "/raffle" },
+
           { label: "Settings", href: "/settings" },
         ],
         activeMatch: [
@@ -101,6 +105,7 @@ export default function NavBar({
           "/settings/commission",
           "/payments",
           "/discounts",
+          "/raffle",
           "/settings",
         ],
       },
@@ -197,6 +202,7 @@ export default function NavBar({
           <button
             onClick={handleLogout}
             className="px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 text-white"
+            type="button"
           >
             Log Out
           </button>
