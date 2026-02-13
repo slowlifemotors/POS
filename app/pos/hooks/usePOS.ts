@@ -132,7 +132,7 @@ function isNoVehiclePlaceholder(v: Vehicle) {
 
 // ✅ Allow these to sell without vehicle selected (flat-priced)
 const STANDALONE_MOD_NAMES = new Set(
-  ["repair", "repair kit", "screwdriver", "raffle ticket"].map((s) => s.toLowerCase().trim())
+  ["repair", "repair kit", "screwdriver", "raffle ticket","membership (month)"].map((s) => s.toLowerCase().trim())
 );
 
 const RAFFLE_MOD_NAMES = new Set(["raffle ticket"].map((s) => s.toLowerCase().trim()));

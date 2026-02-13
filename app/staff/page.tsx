@@ -49,7 +49,7 @@ export default function StaffPage() {
               setEditing(null);
               setShowModal(true);
             }}
-            className="bg-[color:var(--accent)] px-4 py-2 rounded-lg"
+            className="bg-(--accent) px-4 py-2 rounded-lg"
           >
             + Add Staff
           </button>
