@@ -16,6 +16,12 @@ export interface CustomerRecord {
   membership_end?: string | null;
 
   note?: string | null;
+
+  // ✅ Blacklist fields
+  is_blacklisted?: boolean;
+  blacklist_reason?: string | null;
+  blacklist_start?: string | null;
+  blacklist_end?: string | null;
 }
 
 export interface DiscountOption {
@@ -48,7 +54,9 @@ export default function EditCustomerModal({
   // ---------------------------------------------------------
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
-  const [discountId, setDiscountId] = useState<number | null>(customer?.discount_id ?? null);
+  const [discountId, setDiscountId] = useState<number | null>(
+    customer?.discount_id ?? null
+  );
 
   const [voucherAmount, setVoucherAmount] = useState<number>(
     toMoneyNumber(customer?.voucher_amount ?? 0)
@@ -57,10 +65,28 @@ export default function EditCustomerModal({
   const [membershipActive, setMembershipActive] = useState<boolean>(
     Boolean(customer?.membership_active ?? false)
   );
-  const [membershipStart, setMembershipStart] = useState<string>(customer?.membership_start ?? "");
-  const [membershipEnd, setMembershipEnd] = useState<string>(customer?.membership_end ?? "");
+  const [membershipStart, setMembershipStart] = useState<string>(
+    customer?.membership_start ?? ""
+  );
+  const [membershipEnd, setMembershipEnd] = useState<string>(
+    customer?.membership_end ?? ""
+  );
 
   const [note, setNote] = useState<string>(customer?.note ?? "");
+
+  // ✅ Blacklist state
+  const [isBlacklisted, setIsBlacklisted] = useState<boolean>(
+    Boolean(customer?.is_blacklisted ?? false)
+  );
+  const [blacklistReason, setBlacklistReason] = useState<string>(
+    customer?.blacklist_reason ?? ""
+  );
+  const [blacklistStart, setBlacklistStart] = useState<string>(
+    customer?.blacklist_start ?? ""
+  );
+  const [blacklistEnd, setBlacklistEnd] = useState<string>(
+    customer?.blacklist_end ?? ""
+  );
 
   const [discounts, setDiscounts] = useState<DiscountOption[]>([]);
   const [saving, setSaving] = useState(false);
@@ -83,6 +109,12 @@ export default function EditCustomerModal({
     setMembershipEnd(customer?.membership_end ?? "");
 
     setNote(customer?.note ?? "");
+
+    // ✅ blacklist sync
+    setIsBlacklisted(Boolean(customer?.is_blacklisted ?? false));
+    setBlacklistReason(customer?.blacklist_reason ?? "");
+    setBlacklistStart(customer?.blacklist_start ?? "");
+    setBlacklistEnd(customer?.blacklist_end ?? "");
   }, [customer]);
 
   const canModifyDiscount = useMemo(() => {
@@ -137,6 +169,22 @@ export default function EditCustomerModal({
       }
     }
 
+    // ✅ Basic validation for blacklist
+    if (isBlacklisted) {
+      if (!blacklistReason.trim()) {
+        alert("Please provide a blacklist reason.");
+        return;
+      }
+      if (!blacklistStart || !blacklistEnd) {
+        alert("Please provide blacklist start and end dates.");
+        return;
+      }
+      if (blacklistEnd < blacklistStart) {
+        alert("Blacklist end date cannot be before start date.");
+        return;
+      }
+    }
+
     const voucher = toMoneyNumber(voucherAmount);
     if (voucher < 0) {
       alert("Voucher amount cannot be negative.");
@@ -145,41 +193,63 @@ export default function EditCustomerModal({
 
     setSaving(true);
 
-    const body: any = {
-      id: customer?.id,
-      name: name.trim(),
-      phone: phone?.trim() ? phone.trim() : null,
+    try {
+      // Build payload
+      const body: any = {
+        id: customer?.id,
+        name: name.trim(),
+        phone: phone?.trim() ? phone.trim() : null,
 
-      voucher_amount: voucher,
+        voucher_amount: voucher,
 
-      membership_active: membershipActive,
-      membership_start: membershipActive ? membershipStart : null,
-      membership_end: membershipActive ? membershipEnd : null,
+        membership_active: membershipActive,
+        membership_start: membershipActive ? membershipStart : null,
+        membership_end: membershipActive ? membershipEnd : null,
 
-      note: note?.trim() ? note.trim() : null,
-    };
+        note: note?.trim() ? note.trim() : null,
 
-    if (canModifyDiscount) {
-      body.discount_id = discountId;
-    }
+        // ✅ blacklist fields (allow removing by toggling off)
+        is_blacklisted: isBlacklisted,
+        blacklist_reason: isBlacklisted ? blacklistReason.trim() : null,
+        blacklist_start: isBlacklisted ? blacklistStart : null,
+        blacklist_end: isBlacklisted ? blacklistEnd : null,
+      };
 
-    const method = isEdit ? "PUT" : "POST";
+      if (canModifyDiscount) {
+        body.discount_id = discountId;
+      }
 
-    const res = await fetch("/api/customers", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+      // Create vs Edit routing
+      let res: Response;
 
-    if (!res.ok) {
-      console.error("Customer save error:", await res.text());
-      alert("Failed to save customer.");
+      if (isEdit) {
+        // ✅ Use the edit endpoint (supports blacklist + voucher + membership + notes)
+        res = await fetch("/api/customers/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } else {
+        // Create still uses the existing customers endpoint
+        res = await fetch("/api/customers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
+
+      if (!res.ok) {
+        console.error("Customer save error:", await res.text());
+        alert("Failed to save customer.");
+        setSaving(false);
+        return;
+      }
+
+      onSaved();
+      onClose();
+    } finally {
       setSaving(false);
-      return;
     }
-
-    onSaved();
-    onClose();
   }
 
   // ---------------------------------------------------------
@@ -209,7 +279,9 @@ export default function EditCustomerModal({
 
           {/* Voucher */}
           <div>
-            <label className="block mb-1 text-sm text-slate-300">Voucher Balance ($)</label>
+            <label className="block mb-1 text-sm text-slate-300">
+              Voucher Balance ($)
+            </label>
             <input
               type="number"
               min={0}
@@ -223,7 +295,9 @@ export default function EditCustomerModal({
           {/* Membership */}
           <div className="border border-slate-700 rounded p-3 bg-slate-900/40">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-semibold text-slate-200">Membership</label>
+              <label className="text-sm font-semibold text-slate-200">
+                Membership
+              </label>
               <label className="flex items-center gap-2 text-sm text-slate-300">
                 <input
                   type="checkbox"
@@ -244,7 +318,9 @@ export default function EditCustomerModal({
             {membershipActive && (
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block mb-1 text-xs text-slate-400">Start</label>
+                  <label className="block mb-1 text-xs text-slate-400">
+                    Start
+                  </label>
                   <input
                     type="date"
                     className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
@@ -254,7 +330,9 @@ export default function EditCustomerModal({
                 </div>
 
                 <div>
-                  <label className="block mb-1 text-xs text-slate-400">End</label>
+                  <label className="block mb-1 text-xs text-slate-400">
+                    End
+                  </label>
                   <input
                     type="date"
                     className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
@@ -272,6 +350,84 @@ export default function EditCustomerModal({
             )}
           </div>
 
+          {/* ✅ Blacklist (editable / removable) */}
+          <div className="border border-slate-700 rounded p-3 bg-slate-900/40">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-semibold text-slate-200">
+                Blacklist
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={isBlacklisted}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setIsBlacklisted(v);
+                    if (!v) {
+                      // clearing removes blacklist on save
+                      setBlacklistReason("");
+                      setBlacklistStart("");
+                      setBlacklistEnd("");
+                    }
+                  }}
+                />
+                {isBlacklisted ? "Blacklisted" : "Not blacklisted"}
+              </label>
+            </div>
+
+            {isBlacklisted ? (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className="block mb-1 text-xs text-slate-400">
+                    Reason
+                  </label>
+                  <textarea
+                    className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
+                    rows={3}
+                    placeholder="Reason..."
+                    value={blacklistReason}
+                    onChange={(e) => setBlacklistReason(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block mb-1 text-xs text-slate-400">
+                      Start
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
+                      value={blacklistStart}
+                      onChange={(e) => setBlacklistStart(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block mb-1 text-xs text-slate-400">
+                      End
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full bg-slate-800 border border-slate-700 p-2 rounded"
+                      value={blacklistEnd}
+                      onChange={(e) => setBlacklistEnd(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-400">
+                  Turn this off to remove the blacklist (it will clear reason/dates on save).
+                </p>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-slate-400">
+                Toggle on to blacklist, or toggle off to remove an existing blacklist.
+              </p>
+            )}
+          </div>
+
           {/* Discount Dropdown — only owner/admin can use */}
           <select
             disabled={!canModifyDiscount}
@@ -279,7 +435,9 @@ export default function EditCustomerModal({
               !canModifyDiscount ? "opacity-50 cursor-not-allowed" : ""
             }`}
             value={discountId ?? ""}
-            onChange={(e) => setDiscountId(e.target.value === "" ? null : Number(e.target.value))}
+            onChange={(e) =>
+              setDiscountId(e.target.value === "" ? null : Number(e.target.value))
+            }
           >
             <option value="">No Discount</option>
 
