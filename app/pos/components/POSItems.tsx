@@ -211,7 +211,8 @@ export default function POSItems({
   const showVehicles = trimmedSearch.length > 0;
 
   return (
-    <div className="pt-24 p-6 overflow-y-auto">
+  <div className="p-0 overflow-y-auto">
+
       <input
         type="text"
         placeholder="Search vehicles"

@@ -86,7 +86,10 @@ export default function NavBar({
           { label: "Jobs", href: "/jobs" },
 
           { label: "Live Staff", href: "/live" },
-          { label: "Sales Log", href: "/sales" },
+
+          // ✅ REPLACED: Sales Log -> Advertisements
+          { label: "Advertisements", href: "/management/advertisements" },
+
           { label: "Commission Settings", href: "/settings/commission" },
           { label: "Pays", href: "/payments" },
           { label: "Discounts", href: "/discounts" },
@@ -104,7 +107,10 @@ export default function NavBar({
           "/mods",
           "/jobs",
           "/live",
-          "/sales",
+
+          // ✅ REPLACED: /sales -> /management/advertisements
+          "/management/advertisements",
+
           "/settings/commission",
           "/payments",
           "/discounts",

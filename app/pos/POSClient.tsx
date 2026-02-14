@@ -6,9 +6,8 @@ import POSCart from "./components/POSCart";
 import POSCheckoutModal from "./components/POSCheckoutModal";
 import POSCustomerStatus from "./components/POSCustomerStatus";
 import AddCustomerModal from "./components/AddCustomerModal";
-
-// ✅ IMPORTANT: use the POS modal (not the customers page modal)
 import EditCustomerModal from "./components/EditCustomerModal";
+import POSAdBanner from "./components/POSAdBanner"; // ✅ NEW
 
 import usePOS from "./hooks/usePOS";
 
@@ -26,20 +25,26 @@ export default function POSClient({
 
   return (
     <div className="flex h-screen bg-transparent text-slate-50">
-      <div className="flex-1">
-        <POSItems
-          vehicles={pos.filteredVehicles}
-          selectedVehicle={pos.selectedVehicle}
-          modsRoot={pos.modsRoot}
-          searchTerm={pos.searchTerm}
-          setSearchTerm={pos.setSearchTerm}
-          onSelectVehicle={pos.selectVehicle}
-          onClearVehicle={pos.clearVehicle}
-          onAddMod={pos.addModToCart}
-        />
-      </div>
+      <div className="flex-1 overflow-y-auto">
+  <div className="pt-8 px-3 pb-3 space-y-3">
+    <POSAdBanner />
+
+    <POSItems
+      vehicles={pos.filteredVehicles}
+      selectedVehicle={pos.selectedVehicle}
+      modsRoot={pos.modsRoot}
+      searchTerm={pos.searchTerm}
+      setSearchTerm={pos.setSearchTerm}
+      onSelectVehicle={pos.selectVehicle}
+      onClearVehicle={pos.clearVehicle}
+      onAddMod={pos.addModToCart}
+    />
+  </div>
+</div>
+
 
       <div className="w-95 bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
+        {/* ... unchanged right panel ... */}
         <button
           onClick={() => pos.setShowCustomerModal(true)}
           className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"
@@ -48,7 +53,6 @@ export default function POSClient({
           {pos.selectedCustomer ? "Change Customer" : "Add / Select Customer"}
         </button>
 
-        {/* ✅ Only show edit button for REAL customers */}
         {pos.selectedCustomer && pos.selectedCustomerType === "customer" && (
           <button
             onClick={() => pos.setShowEditCustomerModal(true)}
@@ -66,7 +70,6 @@ export default function POSClient({
           customerType={pos.selectedCustomerType}
         />
 
-        {/* Plate entry */}
         <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
           <h3 className="text-sm font-semibold text-slate-300 mb-2">Plate</h3>
           <input
@@ -113,7 +116,6 @@ export default function POSClient({
         />
       )}
 
-      {/* ✅ POS EditCustomerModal expects customer + onClose + onSelectCustomer */}
       {pos.showEditCustomerModal && (
         <EditCustomerModal
           customer={pos.selectedCustomerType === "customer" ? (pos.selectedCustomer as any) : null}
