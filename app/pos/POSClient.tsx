@@ -1,15 +1,25 @@
 // app/pos/POSClient.tsx
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+
 import POSItems from "./components/POSItems";
 import POSCart from "./components/POSCart";
 import POSCheckoutModal from "./components/POSCheckoutModal";
 import POSCustomerStatus from "./components/POSCustomerStatus";
 import AddCustomerModal from "./components/AddCustomerModal";
 import EditCustomerModal from "./components/EditCustomerModal";
-import POSAdBanner from "./components/POSAdBanner"; // ✅ NEW
+import POSAdBanner from "./components/POSAdBanner";
 
 import usePOS from "./hooks/usePOS";
+
+function fmtDT(iso: string) {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
 
 export default function POSClient({
   staffId,
@@ -23,28 +33,81 @@ export default function POSClient({
   const voucherAllowed = pos.selectedCustomerType === "customer" && !!pos.selectedCustomer;
   const voucherBalance = voucherAllowed ? Number((pos.selectedCustomer as any)?.voucher_amount ?? 0) : 0;
 
+  // Saved jobs modal
+  const [showSavedJobs, setShowSavedJobs] = useState(false);
+
+  useEffect(() => {
+    if (!showSavedJobs) return;
+    pos.loadSavedJobs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSavedJobs]);
+
+  const canSave = pos.cart.length > 0;
+
+  const headerDraftText = useMemo(() => {
+    if (!pos.currentDraftId) return null;
+    return `Editing saved job`;
+  }, [pos.currentDraftId]);
+
+  const onSaveJob = async () => {
+    const title = window.prompt("Saved Job Name (optional):", "");
+    const id = await pos.saveJob(title ?? "");
+    if (!id) return;
+
+    alert("Job saved.");
+
+    // ✅ Immediately start a fresh job after saving
+    pos.startNewJob();
+  };
+
   return (
     <div className="flex h-screen bg-transparent text-slate-50">
       <div className="flex-1 overflow-y-auto">
-  <div className="pt-8 px-3 pb-3 space-y-3">
-    <POSAdBanner />
+        <div className="pt-8 px-3 pb-3 space-y-3">
+          <POSAdBanner />
 
-    <POSItems
-      vehicles={pos.filteredVehicles}
-      selectedVehicle={pos.selectedVehicle}
-      modsRoot={pos.modsRoot}
-      searchTerm={pos.searchTerm}
-      setSearchTerm={pos.setSearchTerm}
-      onSelectVehicle={pos.selectVehicle}
-      onClearVehicle={pos.clearVehicle}
-      onAddMod={pos.addModToCart}
-    />
-  </div>
-</div>
-
+          <POSItems
+            vehicles={pos.filteredVehicles}
+            selectedVehicle={pos.selectedVehicle}
+            modsRoot={pos.modsRoot}
+            searchTerm={pos.searchTerm}
+            setSearchTerm={pos.setSearchTerm}
+            onSelectVehicle={pos.selectVehicle}
+            onClearVehicle={pos.clearVehicle}
+            onAddMod={pos.addModToCart}
+          />
+        </div>
+      </div>
 
       <div className="w-95 bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
-        {/* ... unchanged right panel ... */}
+        {/* Saved Jobs + Customer */}
+        {headerDraftText && (
+          <div className="mb-3 rounded-lg border border-amber-700/40 bg-amber-900/15 px-3 py-2 text-amber-200 text-sm">
+            {headerDraftText}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <button
+            onClick={onSaveJob}
+            disabled={!canSave || pos.isPaying}
+            className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition disabled:bg-slate-800/40 disabled:text-slate-500 disabled:border-slate-800"
+            type="button"
+            title={!canSave ? "Add items to cart first" : "Save this job and return later"}
+          >
+            Save Job
+          </button>
+
+          <button
+            onClick={() => setShowSavedJobs(true)}
+            disabled={pos.isPaying}
+            className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition disabled:bg-slate-800/40 disabled:text-slate-500 disabled:border-slate-800"
+            type="button"
+          >
+            Saved Jobs
+          </button>
+        </div>
+
         <button
           onClick={() => pos.setShowCustomerModal(true)}
           className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"
@@ -133,6 +196,84 @@ export default function POSClient({
           onClose={() => pos.setIsCheckoutOpen(false)}
           isPaying={pos.isPaying}
         />
+      )}
+
+      {/* Saved Jobs Modal */}
+      {showSavedJobs && (
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
+          <div className="bg-slate-900 w-[720px] max-w-[95vw] p-6 rounded-xl border border-slate-700 shadow-xl text-slate-100">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h2 className="text-2xl font-bold">Saved Jobs</h2>
+
+              <button
+                onClick={() => setShowSavedJobs(false)}
+                className="px-3 py-2 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700"
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            {pos.draftsLoading ? (
+              <div className="text-slate-400">Loading…</div>
+            ) : pos.draftsError ? (
+              <div className="mb-4 rounded border border-red-700/50 bg-red-900/20 p-3 text-red-200">
+                {pos.draftsError}
+              </div>
+            ) : pos.drafts.length === 0 ? (
+              <div className="text-slate-400">No saved jobs.</div>
+            ) : (
+              <div className="max-h-[60vh] overflow-y-auto space-y-2">
+                {pos.drafts.map((d) => (
+                  <div
+                    key={d.id}
+                    className="p-3 bg-slate-800 border border-slate-700 rounded-lg flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">
+                        {d.title?.trim() ? d.title : "Untitled Job"}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Updated: {fmtDT(d.updated_at)} • Created: {fmtDT(d.created_at)}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await pos.resumeJob(d.id);
+                          setShowSavedJobs(false);
+                        }}
+                        className="px-3 py-2 rounded bg-(--accent) hover:bg-(--accent-hover) text-white text-sm font-semibold"
+                      >
+                        Resume
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => pos.deleteJob(d.id)}
+                        className="px-3 py-2 rounded bg-slate-900 border border-slate-600 hover:bg-slate-700 text-slate-100 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => pos.loadSavedJobs()}
+                className="px-3 py-2 rounded bg-slate-800 border border-slate-600 hover:bg-slate-700 text-sm font-semibold"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

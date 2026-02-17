@@ -86,6 +86,31 @@ type UsePOSArgs = {
   staffName?: string;
 };
 
+type DraftListItem = {
+  id: string;
+  title: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+type DraftPayload = {
+  version: 1;
+
+  staff_id: number;
+
+  selected_vehicle_id: number | null; // real vehicle id, OR null (no vehicle selected)
+  cart: CartItem[];
+
+  selected_customer_type: SelectedCustomerType;
+  selected_customer_id: number | null; // real customer id OR null
+  staff_customer_id: number | null; // if staff sale, this is staff id
+
+  plate: string;
+
+  // snapshot display name for staff sale (so list looks nice even if staff name changes)
+  staff_customer_name: string | null;
+};
+
 function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
@@ -132,7 +157,9 @@ function isNoVehiclePlaceholder(v: Vehicle) {
 
 // ✅ Allow these to sell without vehicle selected (flat-priced)
 const STANDALONE_MOD_NAMES = new Set(
-  ["repair", "repair kit", "screwdriver", "raffle ticket","membership (month)"].map((s) => s.toLowerCase().trim())
+  ["repair", "repair kit", "screwdriver", "raffle ticket", "membership (month)"].map((s) =>
+    s.toLowerCase().trim()
+  )
 );
 
 const RAFFLE_MOD_NAMES = new Set(["raffle ticket"].map((s) => s.toLowerCase().trim()));
@@ -157,6 +184,78 @@ function isMembershipActive(c: Customer | null) {
 
 function isRaffleLineItem(item: CartItem) {
   return RAFFLE_MOD_NAMES.has(String(item.mod_name ?? "").toLowerCase().trim());
+}
+
+async function safeJson(res: Response) {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * ✅ Robustly normalize whatever comes back from the API into DraftPayload | null.
+ * Handles:
+ * - payload being a JSON string
+ * - payload being nested like { payload: { ... } }
+ * - version being "1" (string) instead of 1 (number)
+ */
+function normalizeDraftPayload(raw: any): DraftPayload | null {
+  try {
+    if (raw == null) return null;
+
+    let p: any = raw;
+
+    // If API sent the jsonb payload as a string
+    if (typeof p === "string") {
+      try {
+        p = JSON.parse(p);
+      } catch {
+        return null;
+      }
+    }
+
+    if (typeof p !== "object" || Array.isArray(p)) return null;
+
+    // If it is nested like { payload: {...} }
+    if (p && typeof p === "object" && p.payload && typeof p.payload === "object") {
+      // only unwrap if it looks like a draft inside
+      const inner = p.payload;
+      if (inner && (inner.cart || inner.selected_vehicle_id !== undefined || inner.version !== undefined)) {
+        p = inner;
+      }
+    }
+
+    const v = Number(p.version);
+    if (v !== 1) return null;
+
+    // Ensure required keys exist (fail-safe defaults)
+    const normalized: DraftPayload = {
+      version: 1,
+      staff_id: Number(p.staff_id ?? 0),
+
+      selected_vehicle_id: p.selected_vehicle_id == null ? null : Number(p.selected_vehicle_id),
+      cart: Array.isArray(p.cart) ? (p.cart as CartItem[]) : [],
+
+      selected_customer_type:
+        p.selected_customer_type === "customer" || p.selected_customer_type === "staff"
+          ? p.selected_customer_type
+          : null,
+
+      selected_customer_id: p.selected_customer_id == null ? null : Number(p.selected_customer_id),
+      staff_customer_id: p.staff_customer_id == null ? null : Number(p.staff_customer_id),
+
+      plate: String(p.plate ?? ""),
+
+      staff_customer_name: p.staff_customer_name == null ? null : String(p.staff_customer_name),
+    };
+
+    return normalized;
+  } catch {
+    return null;
+  }
 }
 
 export default function usePOS({ staffId }: UsePOSArgs) {
@@ -184,6 +283,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [isPaying, setIsPaying] = useState(false);
 
   const [plate, setPlate] = useState("");
+
+  // -------------------------
+  // SAVED JOBS (DRAFTS)
+  // -------------------------
+  const [drafts, setDrafts] = useState<DraftListItem[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(false);
+  const [draftsError, setDraftsError] = useState<string | null>(null);
+
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
 
   const serviceVehicleId = serviceVehicle?.id ?? null;
 
@@ -245,7 +353,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const loadTabs = async () => {
     const res = await fetch("/api/tabs?active=true");
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
     if (Array.isArray(json.tabs)) setTabs(json.tabs as Tab[]);
     else setTabs([]);
   };
@@ -284,12 +392,14 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setSelectedVehicle(v);
     setCart([]);
     setIsCheckoutOpen(false);
+    setCurrentDraftId(null); // new job context
   };
 
   const clearVehicle = () => {
     setSelectedVehicle(null);
     setCart([]);
     setIsCheckoutOpen(false);
+    setCurrentDraftId(null); // new job context
   };
 
   const isAllowedFlatOnInactive = (mod: ModNode) => {
@@ -461,8 +571,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
   const discountPercent = !cartHasRaffle && discount ? Number(discount.percent ?? 0) : 0;
 
-  const effectiveDiscountPercent =
-    selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
+  const effectiveDiscountPercent = selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
 
   const nonRaffleDiscountAmount = roundToCents((nonRaffleSubtotal * effectiveDiscountPercent) / 100);
   const nonRaffleAfterDiscount = roundToCents(nonRaffleSubtotal - nonRaffleDiscountAmount);
@@ -562,6 +671,215 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const cartHasVehicleItems = cart.some((c) => !c.is_service_item);
   const canCheckout = cart.length > 0 && (!cartHasVehicleItems || (cartHasVehicleItems && selectedVehicle != null));
 
+  // -------------------------
+  // SAVED JOBS HELPERS
+  // -------------------------
+  const buildDraftPayload = (): DraftPayload => {
+    const staffCustomerId =
+      selectedCustomerType === "staff" && selectedCustomer ? Math.abs(Number(selectedCustomer.id)) : null;
+
+    return {
+      version: 1,
+      staff_id: staffId,
+      selected_vehicle_id: selectedVehicle ? selectedVehicle.id : null,
+      cart,
+      selected_customer_type: selectedCustomerType,
+      selected_customer_id: selectedCustomerType === "customer" && selectedCustomer ? selectedCustomer.id : null,
+      staff_customer_id: selectedCustomerType === "staff" ? staffCustomerId : null,
+      plate: plate ?? "",
+      staff_customer_name:
+        selectedCustomerType === "staff" && selectedCustomer ? String(selectedCustomer.name ?? "") : null,
+    };
+  };
+
+  const loadSavedJobs = async () => {
+    setDraftsLoading(true);
+    setDraftsError(null);
+    try {
+      const res = await fetch("/api/pos/jobs", { cache: "no-store" });
+      const json = await safeJson(res);
+      if (!res.ok) throw new Error(json?.error || "Failed to load saved jobs.");
+      setDrafts(Array.isArray(json.jobs) ? (json.jobs as DraftListItem[]) : []);
+    } catch (e: any) {
+      setDraftsError(e?.message ?? "Failed to load saved jobs.");
+      setDrafts([]);
+    } finally {
+      setDraftsLoading(false);
+    }
+  };
+
+  const saveJob = async (title?: string) => {
+    if (cart.length === 0) {
+      alert("Cart is empty — nothing to save.");
+      return null;
+    }
+
+    const payload = buildDraftPayload();
+
+    const res = await fetch("/api/pos/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        id: currentDraftId, // if present -> update same draft (editing saved job)
+        title: (title ?? "").trim() || null,
+        payload,
+      }),
+    });
+
+    const json = await safeJson(res);
+    if (!res.ok) {
+      alert(json?.error || "Failed to save job.");
+      return null;
+    }
+
+    const id = String(json?.id ?? "");
+    if (id) setCurrentDraftId(id);
+
+    // refresh list (best effort)
+    loadSavedJobs();
+
+    return id || null;
+  };
+
+  const deleteJob = async (id: string) => {
+    const ok = confirm("Delete this saved job?");
+    if (!ok) return;
+
+    const res = await fetch(`/api/pos/jobs?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    });
+
+    const json = await safeJson(res);
+    if (!res.ok) {
+      alert(json?.error || "Failed to delete saved job.");
+      return;
+    }
+
+    if (currentDraftId === id) setCurrentDraftId(null);
+
+    loadSavedJobs();
+  };
+
+  const applyDraftToState = async (draft: DraftPayload) => {
+    // vehicle
+    const vId = Number(draft.selected_vehicle_id ?? 0);
+    const v = vId ? vehicles.find((x) => x.id === vId) ?? null : null;
+    setSelectedVehicle(v);
+
+    // cart
+    setCart(Array.isArray(draft.cart) ? (draft.cart as CartItem[]) : []);
+
+    // plate
+    setPlate(String(draft.plate ?? ""));
+
+    // customer
+    if (draft.selected_customer_type === "customer" && draft.selected_customer_id) {
+      const cid = Number(draft.selected_customer_id);
+
+      const res = await fetch(`/api/customers?id=${cid}`, { cache: "no-store" });
+      const json = await safeJson(res);
+      if (res.ok && json?.customer) {
+        const customer = json.customer as Customer;
+        setSelectedCustomer(customer);
+        setSelectedCustomerType("customer");
+
+        if (customer.discount_id) {
+          const dres = await fetch(`/api/discounts?id=${customer.discount_id}`, { cache: "no-store" });
+          const djson = await safeJson(dres);
+          setDiscount(dres.ok ? (djson?.discount as Discount) ?? null : null);
+        } else {
+          setDiscount(null);
+        }
+      } else {
+        // fail-open: keep draft cart, but clear customer
+        setSelectedCustomer(null);
+        setSelectedCustomerType(null);
+        setDiscount(null);
+      }
+      return;
+    }
+
+    if (draft.selected_customer_type === "staff" && draft.staff_customer_id) {
+      const staffCustomerId = Number(draft.staff_customer_id);
+
+      const pseudoCustomer: Customer = {
+        id: -Math.abs(staffCustomerId),
+        name: String(draft.staff_customer_name ?? `Staff #${staffCustomerId}`),
+        phone: null,
+        discount_id: null,
+
+        voucher_amount: 0,
+
+        membership_active: false,
+        membership_start: null,
+        membership_end: null,
+
+        is_blacklisted: false,
+        blacklist_reason: null,
+        blacklist_start: null,
+        blacklist_end: null,
+      };
+
+      setSelectedCustomer(pseudoCustomer);
+      setSelectedCustomerType("staff");
+      setDiscount(null);
+      return;
+    }
+
+    // none
+    setSelectedCustomer(null);
+    setSelectedCustomerType(null);
+    setDiscount(null);
+  };
+
+  const resumeJob = async (id: string) => {
+    const res = await fetch(`/api/pos/jobs?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    const json = await safeJson(res);
+    if (!res.ok) {
+      alert(json?.error || "Failed to load saved job.");
+      return;
+    }
+
+    const normalized = normalizeDraftPayload(json?.payload);
+    if (!normalized) {
+      console.warn("Incompatible saved job payload:", json?.payload);
+      alert("Saved job payload is missing or incompatible.");
+      return;
+    }
+
+    setCurrentDraftId(String(id));
+    setIsCheckoutOpen(false);
+
+    await applyDraftToState(normalized);
+  };
+
+  const startNewJob = () => {
+    setCart([]);
+    setIsCheckoutOpen(false);
+
+    setSelectedCustomer(null);
+    setSelectedCustomerType(null);
+    setDiscount(null);
+
+    setPlate("");
+    setCurrentDraftId(null);
+
+    setSelectedVehicle(null);
+  };
+
+  const clearJobState = () => {
+    setCart([]);
+    setIsCheckoutOpen(false);
+    setSelectedCustomer(null);
+    setSelectedCustomerType(null);
+    setDiscount(null);
+    setSelectedVehicle(null);
+    setPlate("");
+    setCurrentDraftId(null);
+  };
+
   const createOrder = async (
     note: string,
     payment: { method: "card" | "voucher" | "split"; voucher_used: number; card_charge: number }
@@ -601,8 +919,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     }
 
     const cardCharge = roundToCents(Math.max(0, displayTotal - voucherUsed));
-    const finalMethod =
-      voucherUsed > 0 && cardCharge > 0 ? "split" : voucherUsed > 0 ? "voucher" : "card";
+    const finalMethod = voucherUsed > 0 && cardCharge > 0 ? "split" : voucherUsed > 0 ? "voucher" : "card";
 
     const payNote = `[PAYMENT: ${finalMethod.toUpperCase()} | voucher_used=$${voucherUsed.toFixed(
       2
@@ -657,13 +974,15 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         return;
       }
 
-      setCart([]);
-      setIsCheckoutOpen(false);
-      setSelectedCustomer(null);
-      setSelectedCustomerType(null);
-      setDiscount(null);
-      setSelectedVehicle(null);
-      setPlate("");
+      // ✅ If we were working from a saved job, delete it after successful payment
+      if (currentDraftId) {
+        fetch(`/api/pos/jobs?id=${encodeURIComponent(currentDraftId)}`, {
+          method: "DELETE",
+          cache: "no-store",
+        }).catch(() => {});
+      }
+
+      clearJobState();
 
       alert(`Sale completed! Order ID: ${json.order_id}`);
     } finally {
@@ -698,6 +1017,20 @@ export default function usePOS({ staffId }: UsePOSArgs) {
 
     plate,
     setPlate,
+
+    // Drafts
+    drafts,
+    draftsLoading,
+    draftsError,
+    currentDraftId,
+
+    loadSavedJobs,
+    saveJob,
+    resumeJob,
+    deleteJob,
+
+    // ✅ New
+    startNewJob,
 
     setSearchTerm,
     selectVehicle,
