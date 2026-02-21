@@ -23,7 +23,7 @@ function fmtMoney0(n: number) {
 }
 
 export default function POSCart({
-  cart,
+  cart = [],
   updateQty,
   removeItem,
   originalTotal,
@@ -32,26 +32,32 @@ export default function POSCart({
   staffDiscountAmount,
   finalTotal,
   isStaffSale,
+  showDiscountLine,
+  discountLineLabel,
 }: {
-  cart: CartItem[];
+  cart?: CartItem[];
   updateQty: (id: string, amt: number) => void;
   removeItem: (id: string) => void;
   originalTotal: number;
   discount: Discount;
   discountAmount: number;
   staffDiscountAmount: number;
-  finalTotal: number; // already rounded up by usePOS
+  finalTotal: number;
   isStaffSale: boolean;
+  showDiscountLine: boolean;
+  discountLineLabel: string | null;
 }) {
+  const safeCart: CartItem[] = Array.isArray(cart) ? cart : [];
+
   return (
     <>
       <h2 className="text-2xl font-bold mb-4 text-slate-50">Cart</h2>
 
       <div className="max-h-[55vh] overflow-y-auto space-y-3">
-        {cart.length === 0 ? (
+        {safeCart.length === 0 ? (
           <p className="text-slate-500 mt-5 text-center">Cart is empty</p>
         ) : (
-          cart.map((item) => (
+          safeCart.map((item) => (
             <div
               key={item.id}
               className="p-3 border border-slate-700 rounded-lg flex justify-between items-center bg-slate-800"
@@ -65,6 +71,7 @@ export default function POSCart({
                 <button
                   className="px-3 py-1 bg-slate-700 rounded hover:bg-slate-600"
                   onClick={() => updateQty(item.id, -1)}
+                  type="button"
                 >
                   -
                 </button>
@@ -74,6 +81,7 @@ export default function POSCart({
                 <button
                   className="px-3 py-1 bg-slate-700 rounded hover:bg-slate-600"
                   onClick={() => updateQty(item.id, +1)}
+                  type="button"
                 >
                   +
                 </button>
@@ -82,6 +90,7 @@ export default function POSCart({
               <button
                 className="text-red-400 text-sm hover:text-red-300"
                 onClick={() => removeItem(item.id)}
+                type="button"
               >
                 Remove
               </button>
@@ -91,13 +100,14 @@ export default function POSCart({
       </div>
 
       <div className="border-t border-slate-700 pt-4 mt-4 space-y-1">
-        <p className="text-lg font-semibold text-slate-300">
-          Subtotal: ${fmtMoney2(originalTotal)}
-        </p>
+        <p className="text-lg font-semibold text-slate-300">Subtotal: ${fmtMoney2(originalTotal)}</p>
 
-        {discount && (
+        {showDiscountLine && discountAmount > 0 && (
           <p className="text-lg font-semibold text-amber-400">
             Discount: -${fmtMoney2(discountAmount)}
+            {discountLineLabel ? (
+              <span className="text-xs text-amber-200/80 ml-2">({discountLineLabel})</span>
+            ) : null}
           </p>
         )}
 
@@ -107,9 +117,7 @@ export default function POSCart({
           </p>
         )}
 
-        <p className="text-xl font-bold text-slate-50 mt-1">
-          Total: ${fmtMoney0(finalTotal)}
-        </p>
+        <p className="text-xl font-bold text-slate-50 mt-1">Total: ${fmtMoney0(finalTotal)}</p>
       </div>
     </>
   );

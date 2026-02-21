@@ -21,6 +21,10 @@ function fmtDT(iso: string) {
   }
 }
 
+function isAllowedManualDiscount(p: number) {
+  return p === 0 || p === 10; // 15/20 disabled for now
+}
+
 export default function POSClient({
   staffId,
   staffName,
@@ -33,8 +37,9 @@ export default function POSClient({
   const voucherAllowed = pos.selectedCustomerType === "customer" && !!pos.selectedCustomer;
   const voucherBalance = voucherAllowed ? Number((pos.selectedCustomer as any)?.voucher_amount ?? 0) : 0;
 
-  // Saved jobs modal
   const [showSavedJobs, setShowSavedJobs] = useState(false);
+
+  const [showDiscountPicker, setShowDiscountPicker] = useState(false);
 
   useEffect(() => {
     if (!showSavedJobs) return;
@@ -42,7 +47,7 @@ export default function POSClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSavedJobs]);
 
-  const canSave = pos.cart.length > 0;
+  const canSave = (pos.cart ?? []).length > 0;
 
   const headerDraftText = useMemo(() => {
     if (!pos.currentDraftId) return null;
@@ -56,8 +61,14 @@ export default function POSClient({
 
     alert("Job saved.");
 
-    // ✅ Immediately start a fresh job after saving
+    // start a fresh job after saving
     pos.startNewJob();
+  };
+
+  const applyManualDiscount = (pct: number) => {
+    if (!isAllowedManualDiscount(pct)) return;
+    pos.setManualDiscountPercent(pct);
+    setShowDiscountPicker(false);
   };
 
   return (
@@ -80,7 +91,6 @@ export default function POSClient({
       </div>
 
       <div className="w-95 bg-slate-900 shadow-xl border-l border-slate-700 p-5 flex flex-col">
-        {/* Saved Jobs + Customer */}
         {headerDraftText && (
           <div className="mb-3 rounded-lg border border-amber-700/40 bg-amber-900/15 px-3 py-2 text-amber-200 text-sm">
             {headerDraftText}
@@ -109,6 +119,21 @@ export default function POSClient({
         </div>
 
         <button
+          onClick={() => setShowDiscountPicker(true)}
+          disabled={pos.isPaying}
+          className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition disabled:bg-slate-800/40 disabled:text-slate-500 disabled:border-slate-800"
+          type="button"
+          title="Adds on top of existing discounts (raffle ticket sales excluded)"
+        >
+          Add Discount
+          {pos.manualDiscountPercent > 0 ? (
+            <span className="ml-2 text-xs px-2 py-0.5 rounded bg-amber-700/40 border border-amber-600 text-amber-100">
+              +{pos.manualDiscountPercent}%
+            </span>
+          ) : null}
+        </button>
+
+        <button
           onClick={() => pos.setShowCustomerModal(true)}
           className="mb-3 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-sm font-medium hover:bg-slate-700 transition"
           type="button"
@@ -131,6 +156,7 @@ export default function POSClient({
           discount={pos.discount}
           isBlacklisted={pos.isBlacklisted}
           customerType={pos.selectedCustomerType}
+          manualDiscountPercent={pos.manualDiscountPercent}
         />
 
         <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
@@ -145,7 +171,7 @@ export default function POSClient({
         </div>
 
         <POSCart
-          cart={pos.cart}
+          cart={pos.cart ?? []}
           updateQty={pos.updateQty}
           removeItem={pos.removeItem}
           originalTotal={pos.originalTotal}
@@ -154,6 +180,8 @@ export default function POSClient({
           staffDiscountAmount={pos.staffDiscountAmount}
           finalTotal={pos.finalTotal}
           isStaffSale={pos.selectedCustomerType === "staff"}
+          showDiscountLine={pos.hasAnyDiscountLine}
+          discountLineLabel={pos.discountLineLabel}
         />
 
         <button
@@ -171,6 +199,79 @@ export default function POSClient({
           </p>
         )}
       </div>
+
+      {showDiscountPicker && (
+        <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
+          <div className="bg-slate-900 w-[520px] max-w-[95vw] p-6 rounded-xl border border-slate-700 shadow-xl text-slate-100">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h2 className="text-2xl font-bold">Add Discount</h2>
+              <button
+                onClick={() => setShowDiscountPicker(false)}
+                className="px-3 py-2 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700"
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="text-sm text-slate-300 mb-4">
+              This stacks on top of existing discounts (raffle ticket sales excluded).
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => applyManualDiscount(10)}
+                className={`py-3 rounded border font-semibold ${
+                  pos.manualDiscountPercent === 10
+                    ? "bg-(--accent) border-(--accent) text-white"
+                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
+                }`}
+                disabled={pos.isPaying}
+              >
+                10%
+              </button>
+
+              <button
+                type="button"
+                className="py-3 rounded border font-semibold bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
+                disabled
+                title="Not enabled yet"
+              >
+                15%
+              </button>
+
+              <button
+                type="button"
+                className="py-3 rounded border font-semibold bg-slate-800/40 border-slate-800 text-slate-500 cursor-not-allowed"
+                disabled
+                title="Not enabled yet"
+              >
+                20%
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <div className="text-xs text-slate-400">
+                Current manual discount:{" "}
+                <span className="font-semibold text-slate-200">
+                  {pos.manualDiscountPercent ? `${pos.manualDiscountPercent}%` : "None"}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => applyManualDiscount(0)}
+                className="px-3 py-2 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 text-sm font-semibold"
+                disabled={pos.isPaying || pos.manualDiscountPercent === 0}
+                title="Remove the manual discount"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pos.showCustomerModal && (
         <AddCustomerModal
@@ -198,7 +299,6 @@ export default function POSClient({
         />
       )}
 
-      {/* Saved Jobs Modal */}
       {showSavedJobs && (
         <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50">
           <div className="bg-slate-900 w-[720px] max-w-[95vw] p-6 rounded-xl border border-slate-700 shadow-xl text-slate-100">

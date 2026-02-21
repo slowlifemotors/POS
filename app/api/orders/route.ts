@@ -30,6 +30,18 @@ function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+function clampPercent(n: number) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, v));
+}
+
+// For now: match UI (only 10% enabled; 15/20 disabled)
+function normalizeManualDiscountPercent(input: unknown) {
+  const p = clampPercent(toNumber(input, 0));
+  return p === 10 ? 10 : 0;
+}
+
 function normalizePlate(v: unknown) {
   if (typeof v !== "string") return null;
   const p = v.trim();
@@ -286,6 +298,9 @@ export async function POST(req: Request) {
     const voucher_used_raw = toNumber(body?.voucher_used, 0);
     const voucher_used = voucher_used_raw > 0 ? roundToCents(voucher_used_raw) : 0;
 
+    // ✅ NEW: manual stacked discount (server enforced)
+    const manual_discount_percent = normalizeManualDiscountPercent(body?.manual_discount_percent);
+
     const lines: IncomingLine[] = Array.isArray(body?.lines) ? body.lines : [];
 
     if (!staff_id || staff_id !== session.staff.id) {
@@ -355,6 +370,7 @@ export async function POST(req: Request) {
     // ✅ If raffle exists, force-disable discount inputs but DO NOT BLOCK THE SALE.
     const forcedDiscountId: number | null = hasRaffleTickets ? null : discount_id;
     const forcedVoucherUsed = hasRaffleTickets ? 0 : voucher_used;
+    const forcedManualDiscountPercent = hasRaffleTickets || customer_is_staff ? 0 : manual_discount_percent;
 
     // -------------------------
     // SERVER-TRUSTED SUBTOTAL
@@ -393,8 +409,12 @@ export async function POST(req: Request) {
     const membershipPercent =
       !customer_is_staff && !hasRaffleTickets ? await getMembershipDiscountPercent(customer_id) : 0;
 
-    const effectiveDiscountPercent =
-      !customer_is_staff && !hasRaffleTickets ? Math.max(discountPercent, membershipPercent) : 0;
+    // ✅ Manual stacks on top of max(discount, membership), but NOT for raffle or staff
+    const basePercent = !customer_is_staff && !hasRaffleTickets ? Math.max(discountPercent, membershipPercent) : 0;
+
+    const effectiveDiscountPercent = !customer_is_staff && !hasRaffleTickets
+      ? clampPercent(basePercent + forcedManualDiscountPercent)
+      : 0;
 
     // -------------------------
     // Compute totals (pre-blacklist)
@@ -531,10 +551,7 @@ export async function POST(req: Request) {
         const current = roundToCents(Math.max(0, Number(cust?.voucher_amount ?? 0)));
         const next = roundToCents(Math.max(0, current - safeVoucherUsed));
 
-        const { error: updErr } = await supabaseServer
-          .from("customers")
-          .update({ voucher_amount: next })
-          .eq("id", customer_id);
+        const { error: updErr } = await supabaseServer.from("customers").update({ voucher_amount: next }).eq("id", customer_id);
 
         if (updErr) console.error("Voucher deduct update error:", updErr);
       }

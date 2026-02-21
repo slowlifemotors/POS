@@ -98,21 +98,29 @@ type DraftPayload = {
 
   staff_id: number;
 
-  selected_vehicle_id: number | null; // real vehicle id, OR null (no vehicle selected)
+  selected_vehicle_id: number | null;
   cart: CartItem[];
 
   selected_customer_type: SelectedCustomerType;
-  selected_customer_id: number | null; // real customer id OR null
-  staff_customer_id: number | null; // if staff sale, this is staff id
+  selected_customer_id: number | null;
+  staff_customer_id: number | null;
 
   plate: string;
 
-  // snapshot display name for staff sale (so list looks nice even if staff name changes)
   staff_customer_name: string | null;
+
+  // ✅ NEW: stacked manual discount percent
+  manual_discount_percent: number;
 };
 
 function roundToCents(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+function clampPercent(n: number) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, v));
 }
 
 function vehicleDisplayName(v: Vehicle) {
@@ -175,7 +183,6 @@ function isMembershipActive(c: Customer | null) {
   const s = c.membership_start;
   const e = c.membership_end;
 
-  // Open-ended if missing dates
   if (!s || !e) return true;
 
   const t = todayYMD();
@@ -195,20 +202,12 @@ async function safeJson(res: Response) {
   }
 }
 
-/**
- * ✅ Robustly normalize whatever comes back from the API into DraftPayload | null.
- * Handles:
- * - payload being a JSON string
- * - payload being nested like { payload: { ... } }
- * - version being "1" (string) instead of 1 (number)
- */
 function normalizeDraftPayload(raw: any): DraftPayload | null {
   try {
     if (raw == null) return null;
 
     let p: any = raw;
 
-    // If API sent the jsonb payload as a string
     if (typeof p === "string") {
       try {
         p = JSON.parse(p);
@@ -219,9 +218,7 @@ function normalizeDraftPayload(raw: any): DraftPayload | null {
 
     if (typeof p !== "object" || Array.isArray(p)) return null;
 
-    // If it is nested like { payload: {...} }
     if (p && typeof p === "object" && p.payload && typeof p.payload === "object") {
-      // only unwrap if it looks like a draft inside
       const inner = p.payload;
       if (inner && (inner.cart || inner.selected_vehicle_id !== undefined || inner.version !== undefined)) {
         p = inner;
@@ -231,7 +228,6 @@ function normalizeDraftPayload(raw: any): DraftPayload | null {
     const v = Number(p.version);
     if (v !== 1) return null;
 
-    // Ensure required keys exist (fail-safe defaults)
     const normalized: DraftPayload = {
       version: 1,
       staff_id: Number(p.staff_id ?? 0),
@@ -248,8 +244,10 @@ function normalizeDraftPayload(raw: any): DraftPayload | null {
       staff_customer_id: p.staff_customer_id == null ? null : Number(p.staff_customer_id),
 
       plate: String(p.plate ?? ""),
-
       staff_customer_name: p.staff_customer_name == null ? null : String(p.staff_customer_name),
+
+      // ✅ NEW
+      manual_discount_percent: clampPercent(Number(p.manual_discount_percent ?? 0)),
     };
 
     return normalized;
@@ -283,6 +281,10 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const [isPaying, setIsPaying] = useState(false);
 
   const [plate, setPlate] = useState("");
+
+  // ✅ NEW: Manual stacked discount (percent)
+  // Allowed for now: 0 or 10 (15/20 UI disabled)
+  const [manualDiscountPercent, setManualDiscountPercent] = useState<number>(0);
 
   // -------------------------
   // SAVED JOBS (DRAFTS)
@@ -392,14 +394,14 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setSelectedVehicle(v);
     setCart([]);
     setIsCheckoutOpen(false);
-    setCurrentDraftId(null); // new job context
+    setCurrentDraftId(null);
   };
 
   const clearVehicle = () => {
     setSelectedVehicle(null);
     setCart([]);
     setIsCheckoutOpen(false);
-    setCurrentDraftId(null); // new job context
+    setCurrentDraftId(null);
   };
 
   const isAllowedFlatOnInactive = (mod: ModNode) => {
@@ -565,13 +567,21 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     .filter((c) => !isRaffleLineItem(c))
     .reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  // Discounts/membership apply ONLY to non-raffle and ONLY for real customers (not staff)
+  // Base discount rules (unchanged):
+  // - Membership OR discount (whichever is higher)
+  // - Only for real customers (not staff)
+  // - Not allowed when cart has raffle
   const membershipPct =
     !cartHasRaffle && selectedCustomerType === "customer" && isMembershipActive(selectedCustomer) ? 10 : 0;
 
   const discountPercent = !cartHasRaffle && discount ? Number(discount.percent ?? 0) : 0;
 
-  const effectiveDiscountPercent = selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
+  const baseDiscountPercent = selectedCustomerType === "staff" ? 0 : Math.max(discountPercent, membershipPct);
+
+  // ✅ Manual discount stacks on top (also blocked for raffle)
+  const manualPct = !cartHasRaffle ? clampPercent(manualDiscountPercent) : 0;
+
+  const effectiveDiscountPercent = clampPercent(baseDiscountPercent + manualPct);
 
   const nonRaffleDiscountAmount = roundToCents((nonRaffleSubtotal * effectiveDiscountPercent) / 100);
   const nonRaffleAfterDiscount = roundToCents(nonRaffleSubtotal - nonRaffleDiscountAmount);
@@ -591,6 +601,13 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const staffDiscountAmount = roundToCents(nonRaffleStaffDiscountAmount); // raffle never contributes
 
   const total = Math.ceil(roundToCents(nonRaffleTotal + raffleTotal));
+
+  // Used for UI display in Cart
+  const hasAnyDiscountLine = effectiveDiscountPercent > 0 && nonRaffleSubtotal > 0;
+  const discountLineTextParts: string[] = [];
+  if (baseDiscountPercent > 0) discountLineTextParts.push(`${baseDiscountPercent}%`);
+  if (manualPct > 0) discountLineTextParts.push(`+${manualPct}%`);
+  const discountLineLabel = discountLineTextParts.length ? `${discountLineTextParts.join(" ")} (stacked)` : null;
 
   // -------------------------
   // BLACKLIST CHECK
@@ -630,8 +647,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   const displayDiscountAmount = roundToCents(discountAmount * blacklistMultiplier);
   const displayStaffDiscountAmount = roundToCents(staffDiscountAmount * blacklistMultiplier);
 
-  // IMPORTANT:
-  // Blacklist multiplier applies to TOTAL as well (stored server-side does this too)
   const displayTotal = Math.ceil(total * blacklistMultiplier);
 
   // -------------------------
@@ -689,6 +704,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       plate: plate ?? "",
       staff_customer_name:
         selectedCustomerType === "staff" && selectedCustomer ? String(selectedCustomer.name ?? "") : null,
+
+      // ✅ NEW
+      manual_discount_percent: clampPercent(manualDiscountPercent),
     };
   };
 
@@ -721,7 +739,7 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
       body: JSON.stringify({
-        id: currentDraftId, // if present -> update same draft (editing saved job)
+        id: currentDraftId,
         title: (title ?? "").trim() || null,
         payload,
       }),
@@ -736,7 +754,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     const id = String(json?.id ?? "");
     if (id) setCurrentDraftId(id);
 
-    // refresh list (best effort)
     loadSavedJobs();
 
     return id || null;
@@ -763,18 +780,16 @@ export default function usePOS({ staffId }: UsePOSArgs) {
   };
 
   const applyDraftToState = async (draft: DraftPayload) => {
-    // vehicle
     const vId = Number(draft.selected_vehicle_id ?? 0);
     const v = vId ? vehicles.find((x) => x.id === vId) ?? null : null;
     setSelectedVehicle(v);
 
-    // cart
     setCart(Array.isArray(draft.cart) ? (draft.cart as CartItem[]) : []);
-
-    // plate
     setPlate(String(draft.plate ?? ""));
 
-    // customer
+    // ✅ restore manual discount
+    setManualDiscountPercent(clampPercent(Number(draft.manual_discount_percent ?? 0)));
+
     if (draft.selected_customer_type === "customer" && draft.selected_customer_id) {
       const cid = Number(draft.selected_customer_id);
 
@@ -793,7 +808,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
           setDiscount(null);
         }
       } else {
-        // fail-open: keep draft cart, but clear customer
         setSelectedCustomer(null);
         setSelectedCustomerType(null);
         setDiscount(null);
@@ -828,7 +842,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
       return;
     }
 
-    // none
     setSelectedCustomer(null);
     setSelectedCustomerType(null);
     setDiscount(null);
@@ -867,6 +880,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setCurrentDraftId(null);
 
     setSelectedVehicle(null);
+
+    // ✅ reset manual discount
+    setManualDiscountPercent(0);
   };
 
   const clearJobState = () => {
@@ -878,6 +894,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     setSelectedVehicle(null);
     setPlate("");
     setCurrentDraftId(null);
+
+    // ✅ reset manual discount
+    setManualDiscountPercent(0);
   };
 
   const createOrder = async (
@@ -942,6 +961,9 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         // ✅ No discounts on raffle ticket sales
         discount_id: cartHasRaffle ? null : discount ? discount.id : null,
 
+        // ✅ NEW: send manual discount too (backend should apply this if it recomputes totals)
+        manual_discount_percent: !cartHasRaffle ? clampPercent(manualDiscountPercent) : 0,
+
         vehicle_base_price: orderVehicleBasePrice,
 
         plate: plate.trim() || null,
@@ -974,7 +996,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
         return;
       }
 
-      // ✅ If we were working from a saved job, delete it after successful payment
       if (currentDraftId) {
         fetch(`/api/pos/jobs?id=${encodeURIComponent(currentDraftId)}`, {
           method: "DELETE",
@@ -1008,6 +1029,12 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     staffDiscountAmount: displayStaffDiscountAmount,
     finalTotal: displayTotal,
 
+    // ✅ Discount UI helpers
+    manualDiscountPercent,
+    setManualDiscountPercent,
+    hasAnyDiscountLine,
+    discountLineLabel,
+
     isCheckoutOpen,
     showCustomerModal,
     showEditCustomerModal,
@@ -1018,7 +1045,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     plate,
     setPlate,
 
-    // Drafts
     drafts,
     draftsLoading,
     draftsError,
@@ -1029,7 +1055,6 @@ export default function usePOS({ staffId }: UsePOSArgs) {
     resumeJob,
     deleteJob,
 
-    // ✅ New
     startNewJob,
 
     setSearchTerm,

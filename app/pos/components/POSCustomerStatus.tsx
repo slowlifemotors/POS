@@ -22,18 +22,31 @@ function isMemberActive(c: Customer | null) {
   return s <= t && t <= e;
 }
 
+function clampPercent(n: number) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, v));
+}
+
 export default function POSCustomerStatus({
   customer,
   discount,
   isBlacklisted,
   customerType,
+  manualDiscountPercent,
 }: {
   customer: Customer | null;
   discount: Discount | null;
   isBlacklisted: boolean;
   customerType: SelectedCustomerType;
+  manualDiscountPercent: number;
 }) {
-  const member = useMemo(() => isMemberActive(customerType === "customer" ? customer : null), [customer, customerType]);
+  const member = useMemo(
+    () => isMemberActive(customerType === "customer" ? customer : null),
+    [customer, customerType]
+  );
+
+  const manualPct = clampPercent(manualDiscountPercent ?? 0);
 
   if (!customer) {
     return (
@@ -46,6 +59,22 @@ export default function POSCustomerStatus({
 
   const voucher = Number(customerType === "customer" ? (customer.voucher_amount ?? 0) : 0);
 
+  const baseDiscountLabel =
+    customerType === "staff"
+      ? "Staff pricing (25% off)"
+      : discount
+      ? `${discount.name} (${discount.percent}%)`
+      : member
+      ? "Membership (10%)"
+      : "None";
+
+  const stackedLabel =
+    customerType !== "staff" && manualPct > 0
+      ? baseDiscountLabel === "None"
+        ? `Manual (+${manualPct}%)`
+        : `${baseDiscountLabel} + Manual (+${manualPct}%)`
+      : baseDiscountLabel;
+
   return (
     <div className="mb-4 p-3 rounded-lg bg-slate-800 text-slate-100 border border-slate-700">
       <div className="flex items-center justify-between gap-3">
@@ -57,14 +86,18 @@ export default function POSCustomerStatus({
 
         <div className="flex flex-col items-end gap-2">
           {customerType === "staff" ? (
-            <span className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200">
-              Staff Sale
-            </span>
+            <span className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-200">Staff Sale</span>
           ) : null}
 
           {customerType === "customer" && member ? (
             <span className="text-xs px-2 py-1 rounded bg-emerald-700/60 border border-emerald-600 text-emerald-100">
               MEMBER (10% OFF)
+            </span>
+          ) : null}
+
+          {customerType !== "staff" && manualPct > 0 ? (
+            <span className="text-xs px-2 py-1 rounded bg-amber-700/40 border border-amber-600 text-amber-100">
+              +{manualPct}% MANUAL
             </span>
           ) : null}
 
@@ -79,15 +112,7 @@ export default function POSCustomerStatus({
       <div className="mt-3 text-sm text-slate-300">
         <div className="flex items-center justify-between">
           <span>Discount</span>
-          <span className="text-slate-100 font-semibold">
-            {customerType === "staff"
-              ? "Staff pricing (25% off)"
-              : discount
-              ? `${discount.name} (${discount.percent}%)`
-              : member
-              ? "Membership (10%)"
-              : "None"}
-          </span>
+          <span className="text-slate-100 font-semibold">{stackedLabel}</span>
         </div>
 
         <div className="flex items-center justify-between mt-1">
