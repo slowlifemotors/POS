@@ -1,4 +1,4 @@
-//app/api/staff/route.ts
+// app/api/staff/route.ts
 /**
  * STAFF MANAGEMENT API
  * Handles CRUD, permission logic, and password hashing.
@@ -118,7 +118,6 @@ function canAssignRole(
   return null;
 }
 
-
 // ---------------------------------------------------------
 // GET STAFF LIST  (FIXED TO ALLOW ALL ROLES)
 // ---------------------------------------------------------
@@ -128,9 +127,7 @@ export async function GET() {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // ❌ Removed the "permissions_level >= 800" restriction
   // Anyone logged in can read staff list
-
   const supabase = supabaseServer();
 
   const { data, error } = await supabase
@@ -327,6 +324,10 @@ export async function PUT(req: Request) {
 
 // ---------------------------------------------------------
 // DELETE STAFF
+// Rules:
+// - Admin: can delete anyone EXCEPT themselves
+// - Owner: can delete everyone EXCEPT themselves and admins
+// - Everyone else: cannot delete anyone
 // ---------------------------------------------------------
 export async function DELETE(req: Request) {
   const caller = await getCallerInfo();
@@ -337,9 +338,25 @@ export async function DELETE(req: Request) {
   if (!id)
     return NextResponse.json({ error: "Missing staff ID" }, { status: 400 });
 
+  // No one can delete themselves (including admin/owner)
+  if (caller.id === id) {
+    return NextResponse.json(
+      { error: "You cannot delete your own account." },
+      { status: 403 }
+    );
+  }
+
+  // Only admin/owner can delete at all
+  if (caller.role !== "admin" && caller.role !== "owner") {
+    return NextResponse.json(
+      { error: "You are not allowed to delete staff." },
+      { status: 403 }
+    );
+  }
+
   const supabase = supabaseServer();
 
-  const { data: targetRaw } = await supabase
+  const { data: targetRaw, error: targetErr } = await supabase
     .from("staff")
     .select(
       `
@@ -357,36 +374,27 @@ export async function DELETE(req: Request) {
     .eq("id", id)
     .single();
 
+  if (targetErr) {
+    return NextResponse.json({ error: targetErr.message }, { status: 500 });
+  }
+
   if (!targetRaw)
     return NextResponse.json({ error: "Staff not found" }, { status: 404 });
 
   const target = normalizeStaffRow(targetRaw);
 
-  // No one can delete admin
-  if (target.role === "admin") {
+  // Owner cannot delete admins
+  if (caller.role === "owner" && target.role === "admin") {
     return NextResponse.json(
-      { error: "Admin accounts cannot be deleted." },
+      { error: "Owners cannot delete admin accounts." },
       { status: 403 }
     );
   }
 
-  if (caller.role === "admin" || caller.role === "owner") {
-    if (caller.id === target.id) {
-      return NextResponse.json(
-        { error: "You cannot delete your own account." },
-        { status: 403 }
-      );
-    }
-  } else {
-    return NextResponse.json(
-      { error: "You are not allowed to delete staff." },
-      { status: 403 }
-    );
-  }
+  // Admin can delete anyone (including other admins), as long as it's not themselves (checked above)
+  const { error: delErr } = await supabase.from("staff").delete().eq("id", id);
 
-  const { error } = await supabase.from("staff").delete().eq("id", id);
-  if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
 
   return NextResponse.json({ message: "Staff deleted" });
 }
