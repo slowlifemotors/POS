@@ -22,10 +22,20 @@ function supabaseServer() {
 }
 
 // ---------------------------------------------------------
+// HELPERS
+// Supabase joins sometimes come back as object OR array.
+// ---------------------------------------------------------
+function pickRoleObject(roles: any): any | null {
+  if (!roles) return null;
+  return Array.isArray(roles) ? roles[0] ?? null : roles;
+}
+
+// ---------------------------------------------------------
 // NORMALIZE STAFF ROW
 // ---------------------------------------------------------
 function normalizeStaffRow(row: any): StaffRecord {
-  const roleName = row.roles?.name?.toLowerCase() || "staff";
+  const roleObj = pickRoleObject(row.roles);
+  const roleName = String(roleObj?.name ?? "staff").toLowerCase();
 
   return {
     id: row.id,
@@ -33,8 +43,8 @@ function normalizeStaffRow(row: any): StaffRecord {
     username: row.username,
     role_id: row.role_id,
     role: roleName,
-    permissions_level: Number(row.roles?.permissions_level ?? 0),
-    commission_rate: Number(row.roles?.commission_rate ?? 0),
+    permissions_level: Number(roleObj?.permissions_level ?? 0),
+    commission_rate: Number(roleObj?.commission_rate ?? 0),
   };
 }
 
@@ -148,7 +158,7 @@ export async function GET() {
       )
     `
     )
-    .eq("active", true) // ✅ hide "deleted" (deactivated) staff
+    .eq("active", true)
     .order("id");
 
   if (error) {
@@ -382,7 +392,8 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Staff not found" }, { status: 404 });
   }
 
-  const targetRole = String(targetRaw.roles?.name ?? "staff").toLowerCase();
+  const roleObj = pickRoleObject(targetRaw.roles);
+  const targetRole = String(roleObj?.name ?? "staff").toLowerCase();
 
   // Owner cannot delete admins
   if (caller.role === "owner" && targetRole === "admin") {
@@ -397,7 +408,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ message: "Staff already deleted" });
   }
 
-  // ✅ Soft delete: deactivate instead of hard delete (avoids FK violations)
+  // Soft delete (avoids FK violations to orders/payments/etc.)
   const { error: updErr } = await supabase
     .from("staff")
     .update({ active: false })
