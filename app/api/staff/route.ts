@@ -111,7 +111,10 @@ function canAssignRole(
     return "Only admins or owners can assign manager role.";
   }
 
-  if (caller.role === "manager" && ["admin", "owner", "manager"].includes(role)) {
+  if (
+    caller.role === "manager" &&
+    ["admin", "owner", "manager"].includes(role)
+  ) {
     return "Managers cannot assign this role.";
   }
 
@@ -119,7 +122,7 @@ function canAssignRole(
 }
 
 // ---------------------------------------------------------
-// GET STAFF LIST  (FIXED TO ALLOW ALL ROLES)
+// GET STAFF LIST (active only)
 // ---------------------------------------------------------
 export async function GET() {
   const caller = await getCallerInfo();
@@ -127,7 +130,6 @@ export async function GET() {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // Anyone logged in can read staff list
   const supabase = supabaseServer();
 
   const { data, error } = await supabase
@@ -138,6 +140,7 @@ export async function GET() {
       name,
       username,
       role_id,
+      active,
       roles:role_id (
         name,
         permissions_level,
@@ -145,6 +148,7 @@ export async function GET() {
       )
     `
     )
+    .eq("active", true) // ✅ hide "deleted" (deactivated) staff
     .order("id");
 
   if (error) {
@@ -152,7 +156,7 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    staff: data.map(normalizeStaffRow),
+    staff: (data ?? []).map(normalizeStaffRow),
   });
 }
 
@@ -323,10 +327,10 @@ export async function PUT(req: Request) {
 }
 
 // ---------------------------------------------------------
-// DELETE STAFF
+// "DELETE" STAFF (SOFT DELETE via active=false)
 // Rules:
-// - Admin: can delete anyone EXCEPT themselves
-// - Owner: can delete everyone EXCEPT themselves and admins
+// - Admin: can delete (deactivate) anyone EXCEPT themselves
+// - Owner: can delete (deactivate) everyone EXCEPT themselves and admins
 // - Everyone else: cannot delete anyone
 // ---------------------------------------------------------
 export async function DELETE(req: Request) {
@@ -338,7 +342,7 @@ export async function DELETE(req: Request) {
   if (!id)
     return NextResponse.json({ error: "Missing staff ID" }, { status: 400 });
 
-  // No one can delete themselves (including admin/owner)
+  // No one can delete themselves
   if (caller.id === id) {
     return NextResponse.json(
       { error: "You cannot delete your own account." },
@@ -346,7 +350,7 @@ export async function DELETE(req: Request) {
     );
   }
 
-  // Only admin/owner can delete at all
+  // Only admin/owner can delete
   if (caller.role !== "admin" && caller.role !== "owner") {
     return NextResponse.json(
       { error: "You are not allowed to delete staff." },
@@ -361,13 +365,9 @@ export async function DELETE(req: Request) {
     .select(
       `
       id,
-      name,
-      username,
-      role_id,
+      active,
       roles:role_id (
-        name,
-        permissions_level,
-        commission_rate
+        name
       )
     `
     )
@@ -378,23 +378,34 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: targetErr.message }, { status: 500 });
   }
 
-  if (!targetRaw)
+  if (!targetRaw) {
     return NextResponse.json({ error: "Staff not found" }, { status: 404 });
+  }
 
-  const target = normalizeStaffRow(targetRaw);
+  const targetRole = String(targetRaw.roles?.name ?? "staff").toLowerCase();
 
   // Owner cannot delete admins
-  if (caller.role === "owner" && target.role === "admin") {
+  if (caller.role === "owner" && targetRole === "admin") {
     return NextResponse.json(
       { error: "Owners cannot delete admin accounts." },
       { status: 403 }
     );
   }
 
-  // Admin can delete anyone (including other admins), as long as it's not themselves (checked above)
-  const { error: delErr } = await supabase.from("staff").delete().eq("id", id);
+  // Already deactivated?
+  if (targetRaw.active === false) {
+    return NextResponse.json({ message: "Staff already deleted" });
+  }
 
-  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+  // ✅ Soft delete: deactivate instead of hard delete (avoids FK violations)
+  const { error: updErr } = await supabase
+    .from("staff")
+    .update({ active: false })
+    .eq("id", id);
+
+  if (updErr) {
+    return NextResponse.json({ error: updErr.message }, { status: 500 });
+  }
 
   return NextResponse.json({ message: "Staff deleted" });
 }
