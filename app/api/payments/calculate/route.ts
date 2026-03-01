@@ -20,9 +20,15 @@ function isRaffleTicketLine(modName: unknown) {
 
 /* ---------------------------------------------------------
    PAY PERIOD
+   ✅ New Rule:
+   - Start is EXACTLY the last payment's period_end (exclusive)
+   - End is current time (now)
+
+   Fallback:
+   - If never paid before, start at 1st of current month
 --------------------------------------------------------- */
 async function getPayPeriod(staff_id: number) {
-  const { data: last } = await supabase
+  const { data: last, error } = await supabase
     .from("payments")
     .select("period_end")
     .eq("staff_id", staff_id)
@@ -30,27 +36,46 @@ async function getPayPeriod(staff_id: number) {
     .limit(1)
     .maybeSingle();
 
+  if (error) {
+    console.error("getPayPeriod error:", error);
+  }
+
   const now = new Date();
 
-  const period_start = last?.period_end
-    ? new Date(last.period_end)
+  const lastEnd = last?.period_end ? new Date(last.period_end) : null;
+
+  // If lastEnd is invalid or somehow in the future, ignore it
+  const hasValidLastEnd =
+    !!lastEnd && Number.isFinite(lastEnd.getTime()) && lastEnd.getTime() < now.getTime();
+
+  const period_start = hasValidLastEnd
+    ? lastEnd!
     : new Date(now.getFullYear(), now.getMonth(), 1);
 
-  return { period_start, period_end: now };
+  // Exclusive start to prevent double counting the boundary
+  const period_start_exclusive = new Date(period_start.getTime() + 1);
+
+  return { period_start, period_start_exclusive, period_end: now };
 }
 
 /* ---------------------------------------------------------
    HOURS WORKED
+   ✅ Use period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
-async function getHours(staff_id: number, start: Date, end: Date) {
-  const { data } = await supabase
+async function getHours(staff_id: number, startExclusive: Date, end: Date) {
+  const { data, error } = await supabase
     .from("timesheets")
     .select("hours_worked")
     .eq("staff_id", staff_id)
-    .gte("clock_in", start.toISOString())
+    .gt("clock_in", startExclusive.toISOString())
     .lte("clock_in", end.toISOString());
 
-  return data?.reduce((s, r) => s + Number(r.hours_worked || 0), 0) ?? 0;
+  if (error) {
+    console.error("getHours error:", error);
+    return 0;
+  }
+
+  return data?.reduce((s, r) => s + Number((r as any).hours_worked || 0), 0) ?? 0;
 }
 
 /* ---------------------------------------------------------
@@ -92,22 +117,22 @@ async function getRaffleRevenueByOrderId(orderIds: string[]) {
 /* ---------------------------------------------------------
    COMMISSION
    GAME RULE:
-   - Checkout price is doubled (profit is exactly half of what customer pays)
-   - Discounts apply to whole sale -> profit is half of FINAL TOTAL
-   => profit = order.total / 2
+   - profit = order.total / 2
 
    IMPORTANT:
-   - Staff sales (customer_is_staff=true) MUST NOT count toward commission
+   - Staff sales MUST NOT count toward commission
 
    ✅ RAFFLE RULE:
    - Raffle tickets IGNORE normal commission rate
    - Raffle commission is ALWAYS 20% of ticket sale price
    - Normal commission is computed on PROFIT EXCLUDING raffle revenue
+
+   ✅ Use period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
 async function getCommission(
   staff_id: number,
   commission_rate: number,
-  start: Date,
+  startExclusive: Date,
   end: Date
 ) {
   const { data: orders, error } = await supabase
@@ -115,8 +140,8 @@ async function getCommission(
     .select("id, total, status, customer_is_staff")
     .eq("staff_id", staff_id)
     .eq("status", "paid")
-    .eq("customer_is_staff", false) // ✅ exclude staff sales
-    .gte("created_at", start.toISOString())
+    .eq("customer_is_staff", false)
+    .gt("created_at", startExclusive.toISOString())
     .lte("created_at", end.toISOString());
 
   if (error) {
@@ -142,7 +167,6 @@ async function getCommission(
     const raffleRevenue = Number(raffleByOrder.get(orderId) ?? 0);
     raffleRevenueTotal += raffleRevenue;
 
-    // Normal profit is based on the portion of the order that is NOT raffle.
     const nonRaffleTotal = Math.max(0, total - raffleRevenue);
     totalProfitExRaffle += nonRaffleTotal / 2;
   }
@@ -150,14 +174,12 @@ async function getCommission(
   const normalCommissionValue =
     totalProfitExRaffle * (Number(commission_rate || 0) / 100);
 
-  // ✅ Raffle commission: 20% of ticket sale price
   const raffleCommissionValue = raffleRevenueTotal * 0.2;
 
   const totalCommissionValue = normalCommissionValue + raffleCommissionValue;
 
   return {
     rate: Number(commission_rate || 0),
-    // Profit displayed should reflect the profit base used for normal commission
     profit: totalProfitExRaffle,
     value: totalCommissionValue,
   };
@@ -204,15 +226,16 @@ export async function GET(req: Request) {
   const hourly_rate = Number(roleRow?.hourly_rate ?? 0);
   const commission_rate = Number(roleRow?.commission_rate ?? 0);
 
-  const { period_start, period_end } = await getPayPeriod(staff_id);
+  const { period_start, period_start_exclusive, period_end } =
+    await getPayPeriod(staff_id);
 
-  const hours = await getHours(staff_id, period_start, period_end);
+  const hours = await getHours(staff_id, period_start_exclusive, period_end);
   const hourly_pay = hours * hourly_rate;
 
   const commission = await getCommission(
     staff_id,
     commission_rate,
-    period_start,
+    period_start_exclusive,
     period_end
   );
 

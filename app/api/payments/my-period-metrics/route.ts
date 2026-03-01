@@ -28,10 +28,13 @@ function isRaffleTicketLine(modName: unknown) {
 }
 
 /* ---------------------------------------------------------
-   PAY PERIOD (same logic as payments/calculate)
+   PAY PERIOD
+   ✅ Start: last payment period_end (exclusive)
+   ✅ End: now
+   Fallback: start of current month if never paid
 --------------------------------------------------------- */
 async function getPayPeriod(staff_id: number) {
-  const { data: last } = await supabase
+  const { data: last, error } = await supabase
     .from("payments")
     .select("period_end")
     .eq("staff_id", staff_id)
@@ -39,18 +42,27 @@ async function getPayPeriod(staff_id: number) {
     .limit(1)
     .maybeSingle();
 
-  const now = new Date();
+  if (error) {
+    console.error("getPayPeriod error:", error);
+  }
 
-  const period_start = last?.period_end
-    ? new Date(last.period_end)
+  const now = new Date();
+  const lastEnd = last?.period_end ? new Date(last.period_end) : null;
+
+  const hasValidLastEnd =
+    !!lastEnd && Number.isFinite(lastEnd.getTime()) && lastEnd.getTime() < now.getTime();
+
+  const period_start = hasValidLastEnd
+    ? lastEnd!
     : new Date(now.getFullYear(), now.getMonth(), 1);
 
-  return { period_start, period_end: now };
+  const period_start_exclusive = new Date(period_start.getTime() + 1);
+
+  return { period_start, period_start_exclusive, period_end: now };
 }
 
 /* ---------------------------------------------------------
    RAFFLE REVENUE MAP (per order)
-   - Excludes voided lines
 --------------------------------------------------------- */
 async function getRaffleRevenueByOrderId(orderIds: string[]) {
   const map = new Map<string, number>();
@@ -86,23 +98,12 @@ async function getRaffleRevenueByOrderId(orderIds: string[]) {
 
 /* ---------------------------------------------------------
    PROFIT + COMMISSION
-   GAME RULE:
-   - Checkout price is doubled => profit is half of what customer pays
-   - Discounts apply to whole sale => profit is half of FINAL TOTAL
-   => profit = order.total / 2
-
-   IMPORTANT:
-   - Staff sales (customer_is_staff=true) MUST NOT count
-
-   ✅ RAFFLE RULE:
-   - Raffle tickets IGNORE normal commission rate
-   - Raffle commission is ALWAYS 20% of ticket sale price
-   - Normal commission is computed on PROFIT EXCLUDING raffle revenue
+   ✅ Uses period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
 async function getProfitAndCommission(
   staff_id: number,
   commission_rate: number,
-  start: Date,
+  startExclusive: Date,
   end: Date
 ) {
   const { data: orders, error } = await supabase
@@ -111,7 +112,7 @@ async function getProfitAndCommission(
     .eq("staff_id", staff_id)
     .eq("status", "paid")
     .eq("customer_is_staff", false)
-    .gte("created_at", start.toISOString())
+    .gt("created_at", startExclusive.toISOString())
     .lte("created_at", end.toISOString());
 
   if (error) {
@@ -137,7 +138,6 @@ async function getProfitAndCommission(
     const raffleRevenue = Number(raffleByOrder.get(orderId) ?? 0);
     raffleRevenueTotal += raffleRevenue;
 
-    // Normal profit base excludes raffle revenue
     const nonRaffleTotal = Math.max(0, total - raffleRevenue);
     totalProfitExRaffle += nonRaffleTotal / 2;
   }
@@ -145,7 +145,6 @@ async function getProfitAndCommission(
   const normalCommissionValue =
     totalProfitExRaffle * (Number(commission_rate || 0) / 100);
 
-  // ✅ Raffle commission: 20% of ticket sale price
   const raffleCommissionValue = raffleRevenueTotal * 0.2;
 
   const totalCommissionValue = normalCommissionValue + raffleCommissionValue;
@@ -173,7 +172,6 @@ export async function GET(req: Request) {
 
     const privileged = isManagerOrAbove(session.staff.role);
 
-    // Default: staff can always fetch their own metrics
     const staff_id =
       privileged && requestedStaffId
         ? Number(requestedStaffId)
@@ -183,12 +181,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Missing staff_id" }, { status: 400 });
     }
 
-    // If non-privileged tries to fetch another staff member, block
     if (!privileged && staff_id !== Number(session.staff.id)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Find staff role -> commission_rate
     const { data: staffRow, error: staffErr } = await supabase
       .from("staff")
       .select("role_id")
@@ -211,12 +207,13 @@ export async function GET(req: Request) {
 
     const commission_rate = Number(roleRow?.commission_rate ?? 0);
 
-    const { period_start, period_end } = await getPayPeriod(staff_id);
+    const { period_start, period_start_exclusive, period_end } =
+      await getPayPeriod(staff_id);
 
     const { profit, commission, orders_count } = await getProfitAndCommission(
       staff_id,
       commission_rate,
-      period_start,
+      period_start_exclusive,
       period_end
     );
 
