@@ -29,9 +29,8 @@ function isRaffleTicketLine(modName: unknown) {
 
 /* ---------------------------------------------------------
    PAY PERIOD
-   ✅ Start: last payment period_end (exclusive)
-   ✅ End: now
-   Fallback: start of current month if never paid
+   - If paid before: last payment end -> now
+   - If never paid: all-time -> now
 --------------------------------------------------------- */
 async function getPayPeriod(staff_id: number) {
   const { data: last, error } = await supabase
@@ -47,16 +46,18 @@ async function getPayPeriod(staff_id: number) {
   }
 
   const now = new Date();
+
   const lastEnd = last?.period_end ? new Date(last.period_end) : null;
-
   const hasValidLastEnd =
-    !!lastEnd && Number.isFinite(lastEnd.getTime()) && lastEnd.getTime() < now.getTime();
+    !!lastEnd &&
+    Number.isFinite(lastEnd.getTime()) &&
+    lastEnd.getTime() < now.getTime();
 
-  const period_start = hasValidLastEnd
-    ? lastEnd!
-    : new Date(now.getFullYear(), now.getMonth(), 1);
+  const period_start = hasValidLastEnd ? lastEnd! : new Date(0);
 
-  const period_start_exclusive = new Date(period_start.getTime() + 1);
+  const period_start_exclusive = hasValidLastEnd
+    ? new Date(period_start.getTime() + 1)
+    : period_start;
 
   return { period_start, period_start_exclusive, period_end: now };
 }
@@ -98,12 +99,11 @@ async function getRaffleRevenueByOrderId(orderIds: string[]) {
 
 /* ---------------------------------------------------------
    PROFIT + COMMISSION
-   ✅ Uses period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
 async function getProfitAndCommission(
   staff_id: number,
   commission_rate: number,
-  startExclusive: Date,
+  start: Date,
   end: Date
 ) {
   const { data: orders, error } = await supabase
@@ -112,7 +112,7 @@ async function getProfitAndCommission(
     .eq("staff_id", staff_id)
     .eq("status", "paid")
     .eq("customer_is_staff", false)
-    .gt("created_at", startExclusive.toISOString())
+    .gt("created_at", start.toISOString())
     .lte("created_at", end.toISOString());
 
   if (error) {
@@ -147,11 +147,9 @@ async function getProfitAndCommission(
 
   const raffleCommissionValue = raffleRevenueTotal * 0.2;
 
-  const totalCommissionValue = normalCommissionValue + raffleCommissionValue;
-
   return {
     profit: totalProfitExRaffle,
-    commission: totalCommissionValue,
+    commission: normalCommissionValue + raffleCommissionValue,
     orders_count: orders.length,
   };
 }

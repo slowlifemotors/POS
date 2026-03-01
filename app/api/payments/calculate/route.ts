@@ -20,12 +20,14 @@ function isRaffleTicketLine(modName: unknown) {
 
 /* ---------------------------------------------------------
    PAY PERIOD
-   ✅ New Rule:
-   - Start is EXACTLY the last payment's period_end (exclusive)
-   - End is current time (now)
-
-   Fallback:
-   - If never paid before, start at 1st of current month
+   Rule:
+   - If they've been paid before:
+       start = last payment period_end (exclusive)
+       end   = now
+   - If they've NEVER been paid:
+       show FULL amount (all-time)
+       start = Unix epoch (1970-01-01)
+       end   = now
 --------------------------------------------------------- */
 async function getPayPeriod(staff_id: number) {
   const { data: last, error } = await supabase
@@ -43,31 +45,31 @@ async function getPayPeriod(staff_id: number) {
   const now = new Date();
 
   const lastEnd = last?.period_end ? new Date(last.period_end) : null;
-
-  // If lastEnd is invalid or somehow in the future, ignore it
   const hasValidLastEnd =
-    !!lastEnd && Number.isFinite(lastEnd.getTime()) && lastEnd.getTime() < now.getTime();
+    !!lastEnd &&
+    Number.isFinite(lastEnd.getTime()) &&
+    lastEnd.getTime() < now.getTime();
 
-  const period_start = hasValidLastEnd
-    ? lastEnd!
-    : new Date(now.getFullYear(), now.getMonth(), 1);
+  // ✅ If never paid: all-time
+  const period_start = hasValidLastEnd ? lastEnd! : new Date(0);
 
-  // Exclusive start to prevent double counting the boundary
-  const period_start_exclusive = new Date(period_start.getTime() + 1);
+  // Exclusive only matters when we actually have a real lastEnd
+  const period_start_exclusive = hasValidLastEnd
+    ? new Date(period_start.getTime() + 1)
+    : period_start;
 
   return { period_start, period_start_exclusive, period_end: now };
 }
 
 /* ---------------------------------------------------------
    HOURS WORKED
-   ✅ Use period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
-async function getHours(staff_id: number, startExclusive: Date, end: Date) {
+async function getHours(staff_id: number, start: Date, end: Date) {
   const { data, error } = await supabase
     .from("timesheets")
     .select("hours_worked")
     .eq("staff_id", staff_id)
-    .gt("clock_in", startExclusive.toISOString())
+    .gt("clock_in", start.toISOString())
     .lte("clock_in", end.toISOString());
 
   if (error) {
@@ -80,7 +82,6 @@ async function getHours(staff_id: number, startExclusive: Date, end: Date) {
 
 /* ---------------------------------------------------------
    RAFFLE REVENUE MAP (per order)
-   - Excludes voided lines
 --------------------------------------------------------- */
 async function getRaffleRevenueByOrderId(orderIds: string[]) {
   const map = new Map<string, number>();
@@ -116,23 +117,11 @@ async function getRaffleRevenueByOrderId(orderIds: string[]) {
 
 /* ---------------------------------------------------------
    COMMISSION
-   GAME RULE:
-   - profit = order.total / 2
-
-   IMPORTANT:
-   - Staff sales MUST NOT count toward commission
-
-   ✅ RAFFLE RULE:
-   - Raffle tickets IGNORE normal commission rate
-   - Raffle commission is ALWAYS 20% of ticket sale price
-   - Normal commission is computed on PROFIT EXCLUDING raffle revenue
-
-   ✅ Use period_start_exclusive with .gt() to avoid overlap
 --------------------------------------------------------- */
 async function getCommission(
   staff_id: number,
   commission_rate: number,
-  startExclusive: Date,
+  start: Date,
   end: Date
 ) {
   const { data: orders, error } = await supabase
@@ -141,7 +130,7 @@ async function getCommission(
     .eq("staff_id", staff_id)
     .eq("status", "paid")
     .eq("customer_is_staff", false)
-    .gt("created_at", startExclusive.toISOString())
+    .gt("created_at", start.toISOString())
     .lte("created_at", end.toISOString());
 
   if (error) {
@@ -176,12 +165,10 @@ async function getCommission(
 
   const raffleCommissionValue = raffleRevenueTotal * 0.2;
 
-  const totalCommissionValue = normalCommissionValue + raffleCommissionValue;
-
   return {
     rate: Number(commission_rate || 0),
     profit: totalProfitExRaffle,
-    value: totalCommissionValue,
+    value: normalCommissionValue + raffleCommissionValue,
   };
 }
 
