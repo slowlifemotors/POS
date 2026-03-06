@@ -15,11 +15,19 @@ function isManagerOrAbove(role: unknown) {
   return r === "owner" || r === "admin" || r === "manager";
 }
 
-function isUuid(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const v = value.trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
+type OrderLineRow = {
+  id?: string;
+  order_id: string;
+  mod_name: string;
+  quantity: number;
+  unit_price: number;
+  pricing_type: "percentage" | "flat" | string | null;
+  pricing_value: number | null;
+  created_at?: string;
+  is_voided?: boolean;
+  void_reason?: string | null;
+  voided_at?: string | null;
+};
 
 type OrderRow = {
   id: string;
@@ -40,20 +48,8 @@ type OrderRow = {
   voided_at?: string | null;
   void_reason?: string | null;
   voided_by_staff_id?: number | null;
-};
 
-type OrderLineRow = {
-  id?: string;
-  order_id: string;
-  mod_name: string;
-  quantity: number;
-  unit_price: number;
-  pricing_type: "percentage" | "flat" | string | null;
-  pricing_value: number | null;
-  created_at?: string;
-  is_voided?: boolean;
-  void_reason?: string | null;
-  voided_at?: string | null;
+  order_lines?: OrderLineRow[];
 };
 
 export default async function JobsPage() {
@@ -64,54 +60,67 @@ export default async function JobsPage() {
 
   const { data: orders, error: ordersErr } = await supabaseServer
     .from("orders")
-    .select(
-      "id, status, vehicle_id, staff_id, customer_id, staff_customer_id, subtotal, discount_amount, total, note, created_at, plate, voided_at, void_reason, voided_by_staff_id"
-    )
+    .select(`
+      id,
+      status,
+      vehicle_id,
+      staff_id,
+      customer_id,
+      staff_customer_id,
+      subtotal,
+      discount_amount,
+      total,
+      note,
+      created_at,
+      plate,
+      voided_at,
+      void_reason,
+      voided_by_staff_id,
+      order_lines (
+        id,
+        order_id,
+        mod_name,
+        quantity,
+        unit_price,
+        pricing_type,
+        pricing_value,
+        created_at,
+        is_voided,
+        void_reason,
+        voided_at
+      )
+    `)
     .in("status", ["paid", "void"])
     .order("created_at", { ascending: false })
     .limit(200);
 
-  const safeOrders = (orders ?? []) as OrderRow[];
-
-  const orderIds = safeOrders
-    .map((o) => String(o.id ?? "").trim())
-    .filter(isUuid);
-
-  const { data: lines, error: linesErr } =
-    orderIds.length === 0
-      ? { data: [], error: null as any }
-      : await supabaseServer
-          .from("order_lines")
-          .select(
-            "id, order_id, mod_name, quantity, unit_price, pricing_type, pricing_value, created_at, is_voided, void_reason, voided_at"
-          )
-          .in("order_id", orderIds)
-          .order("created_at", { ascending: true });
-
-  const safeLines = (lines ?? []) as OrderLineRow[];
+  const safeOrders = ((orders ?? []) as OrderRow[]).map((o) => ({
+    ...o,
+    order_lines: Array.isArray(o.order_lines) ? o.order_lines : [],
+  }));
 
   const linesByOrderId = new Map<string, OrderLineRow[]>();
-  for (const l of safeLines) {
-    const key = String(l.order_id ?? "").trim();
-    if (!key) continue;
+  for (const o of safeOrders) {
+    const lines = [...(o.order_lines ?? [])].sort((a, b) => {
+      const av = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bv = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return av - bv;
+    });
 
-    const arr = linesByOrderId.get(key) ?? [];
-    arr.push(l);
-    linesByOrderId.set(key, arr);
+    linesByOrderId.set(String(o.id), lines);
   }
 
   const vehicleIds = Array.from(
-    new Set(
-      safeOrders
-        .map((o) => Number(o.vehicle_id))
-        .filter((n) => Number.isFinite(n) && n > 0)
-    )
+    new Set(safeOrders.map((o) => Number(o.vehicle_id)).filter((n) => Number.isFinite(n) && n > 0))
   );
 
   const { data: vehicles, error: vehiclesErr } =
     vehicleIds.length === 0
       ? { data: [], error: null as any }
-      : await supabaseServer.from("vehicles").select("id, manufacturer, model").in("id", vehicleIds);
+      : await supabaseServer
+          .from("vehicles")
+          .select("id, manufacturer, model")
+          .in("id", vehicleIds);
 
   const vehicleNameById = new Map<number, string>();
   (vehicles ?? []).forEach((v: any) => {
@@ -131,11 +140,17 @@ export default async function JobsPage() {
   const { data: staffRows, error: staffErr } =
     staffIds.length === 0
       ? { data: [], error: null as any }
-      : await supabaseServer.from("staff").select("id, name, username").in("id", staffIds);
+      : await supabaseServer
+          .from("staff")
+          .select("id, name, username")
+          .in("id", staffIds);
 
   const staffNameById = new Map<number, string>();
   (staffRows ?? []).forEach((s: any) => {
-    const label = String(s?.name ?? "").trim() || String(s?.username ?? "").trim() || `Staff #${s.id}`;
+    const label =
+      String(s?.name ?? "").trim() ||
+      String(s?.username ?? "").trim() ||
+      `Staff #${s.id}`;
     staffNameById.set(Number(s.id), label);
   });
 
@@ -150,7 +165,10 @@ export default async function JobsPage() {
   const { data: customers, error: customersErr } =
     customerIds.length === 0
       ? { data: [], error: null as any }
-      : await supabaseServer.from("customers").select("id, name").in("id", customerIds);
+      : await supabaseServer
+          .from("customers")
+          .select("id, name")
+          .in("id", customerIds);
 
   const customerNameById = new Map<number, string>();
   (customers ?? []).forEach((c: any) => {
@@ -160,7 +178,6 @@ export default async function JobsPage() {
 
   const bannerWarnings: string[] = [];
   if (ordersErr) bannerWarnings.push("Failed to load orders.");
-  if (linesErr) bannerWarnings.push("Failed to load order lines.");
   if (vehiclesErr) bannerWarnings.push("Failed to load vehicle names.");
   if (staffErr) bannerWarnings.push("Failed to load staff names.");
   if (customersErr) bannerWarnings.push("Failed to load customer names.");
