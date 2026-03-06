@@ -15,6 +15,12 @@ function isManagerOrAbove(role: unknown) {
   return r === "owner" || r === "admin" || r === "manager";
 }
 
+function isUuid(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 type OrderRow = {
   id: string;
   status: string;
@@ -22,7 +28,7 @@ type OrderRow = {
   staff_id: number;
 
   customer_id: number | null;
-  staff_customer_id?: number | null; // ✅ NEW
+  staff_customer_id?: number | null;
 
   subtotal: number;
   discount_amount: number;
@@ -67,7 +73,9 @@ export default async function JobsPage() {
 
   const safeOrders = (orders ?? []) as OrderRow[];
 
-  const orderIds = safeOrders.map((o) => o.id);
+  const orderIds = safeOrders
+    .map((o) => String(o.id ?? "").trim())
+    .filter(isUuid);
 
   const { data: lines, error: linesErr } =
     orderIds.length === 0
@@ -84,12 +92,22 @@ export default async function JobsPage() {
 
   const linesByOrderId = new Map<string, OrderLineRow[]>();
   for (const l of safeLines) {
-    const arr = linesByOrderId.get(l.order_id) ?? [];
+    const key = String(l.order_id ?? "").trim();
+    if (!key) continue;
+
+    const arr = linesByOrderId.get(key) ?? [];
     arr.push(l);
-    linesByOrderId.set(l.order_id, arr);
+    linesByOrderId.set(key, arr);
   }
 
-  const vehicleIds = Array.from(new Set(safeOrders.map((o) => o.vehicle_id)));
+  const vehicleIds = Array.from(
+    new Set(
+      safeOrders
+        .map((o) => Number(o.vehicle_id))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    )
+  );
+
   const { data: vehicles, error: vehiclesErr } =
     vehicleIds.length === 0
       ? { data: [], error: null as any }
@@ -103,11 +121,10 @@ export default async function JobsPage() {
     vehicleNameById.set(Number(v.id), label);
   });
 
-  // ✅ include staff_customer_id in staff name map lookup too
   const staffIds = Array.from(
     new Set([
-      ...safeOrders.map((o) => o.staff_id),
-      ...safeOrders.map((o) => Number(o.staff_customer_id ?? 0)).filter((n) => n > 0),
+      ...safeOrders.map((o) => Number(o.staff_id)).filter((n) => Number.isFinite(n) && n > 0),
+      ...safeOrders.map((o) => Number(o.staff_customer_id ?? 0)).filter((n) => Number.isFinite(n) && n > 0),
     ])
   );
 
@@ -123,7 +140,11 @@ export default async function JobsPage() {
   });
 
   const customerIds = Array.from(
-    new Set(safeOrders.map((o) => o.customer_id).filter((id): id is number => typeof id === "number"))
+    new Set(
+      safeOrders
+        .map((o) => o.customer_id)
+        .filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+    )
   );
 
   const { data: customers, error: customersErr } =
