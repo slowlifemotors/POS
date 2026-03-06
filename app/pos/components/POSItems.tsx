@@ -60,10 +60,14 @@ function computePriceLabel(
 }
 
 const MENU_DEFAULT_OPEN_BY_NAME: Record<string, boolean> = {
-  cosmetics: false,
-  upgrades: true,
-  mods: true,
   "frequently used": true,
+  bulk: false,
+  upgrades: false,
+  cosmetics: false,
+  "body parts": false,
+  respray: false,
+  wheels: false,
+  
 };
 
 function normalizeMenuKey(name: unknown) {
