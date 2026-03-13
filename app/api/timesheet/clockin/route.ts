@@ -19,38 +19,51 @@ export async function POST() {
 
     const staffId = session.staff.id;
 
-    // Check for an open (active) shift
-    const { data: activeShift, error: activeErr } = await supabase
+    // Active shift = explicitly clocked in AND no clock_out yet
+    const { data: activeShifts, error: checkErr } = await supabase
       .from("timesheets")
-      .select("*")
+      .select("id")
       .eq("staff_id", staffId)
+      .eq("is_clocked_in", true)
       .is("clock_out", null)
-      .maybeSingle();
+      .limit(1);
 
-    if (activeErr && activeErr.code !== "PGRST116") {
-      console.error("Clockin check error:", activeErr);
+    if (checkErr) {
+      console.error("Clock-in check error:", checkErr);
+      return NextResponse.json(
+        { error: "Failed to check clock-in status" },
+        { status: 500 }
+      );
     }
 
-    if (activeShift) {
+    if (activeShifts && activeShifts.length > 0) {
       return NextResponse.json(
         { error: "Already clocked in" },
-        { status: 400 }
+        { status: 409 }
       );
     }
 
     const now = new Date().toISOString();
 
-    // INSERT shift with is_clocked_in = TRUE
-    const { error } = await supabase
-      .from("timesheets")
-      .insert({
-        staff_id: staffId,
-        clock_in: now,
-        is_clocked_in: true
-      });
+    const { error: insertErr } = await supabase.from("timesheets").insert({
+      staff_id: staffId,
+      clock_in: now,
+      clock_out: null,
+      hours_worked: null,
+      is_clocked_in: true,
+    });
 
-    if (error) {
-      console.error("Clock-in error:", error);
+    if (insertErr) {
+      console.error("Clock-in insert error:", insertErr);
+
+      // If unique index exists, this catches race conditions / double clicks
+      if (insertErr.code === "23505") {
+        return NextResponse.json(
+          { error: "Already clocked in" },
+          { status: 409 }
+        );
+      }
+
       return NextResponse.json(
         { error: "Clock-in failed" },
         { status: 500 }
@@ -59,7 +72,7 @@ export async function POST() {
 
     return NextResponse.json({ success: true, clock_in: now });
   } catch (err) {
-    console.error("Clockin fatal error:", err);
+    console.error("Clock-in fatal error:", err);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
